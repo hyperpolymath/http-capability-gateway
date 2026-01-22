@@ -39,7 +39,10 @@ defmodule HttpCapabilityGateway.MixProject do
       # Observability
       {:telemetry, "~> 1.2"},
       {:telemetry_metrics, "~> 1.0"},
-      {:telemetry_poller, "~> 1.1"}
+      {:telemetry_poller, "~> 1.1"},
+
+      # Testing
+      {:stream_data, "~> 1.0", only: :test}
     ]
   end
 end
