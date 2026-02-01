@@ -2,7 +2,7 @@
 
 **A high-performance Elixir HTTP gateway with declarative verb governance and stealth mode.**
 
-[![License: PMPL-1.0-or-later](https://img.shields.io/badge/License-PMPL--1.0--or--later-blue.svg)](LICENSE)
+image:https://img.shields.io/badge/License-PMPL--1.0-blue.svg[License: PMPL-1.0,link="https://github.com/hyperpolymath/palimpsest-license"]
 ![Elixir 1.19+](https://img.shields.io/badge/Elixir-1.19+-purple.svg)
 ![OTP 27+](https://img.shields.io/badge/OTP-27+-red.svg)
 
