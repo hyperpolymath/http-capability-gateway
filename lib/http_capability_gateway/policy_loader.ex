@@ -1,97 +1,65 @@
 # SPDX-License-Identifier: PMPL-1.0-or-later
 defmodule HttpCapabilityGateway.PolicyLoader do
   @moduledoc """
-  Loads Verb Governance Spec (YAML) from disk.
+  Loads Verb Governance Spec (DSL v1) from YAML content or file.
 
-  Parses YAML policy file and returns structured Elixir map.
-  Handles file I/O errors and YAML parsing errors gracefully.
+  ## Examples
 
-  ## Example Policy Structure
+      iex> yaml = \"\"\"
+      ...> dsl_version: "1"
+      ...> governance:
+      ...>   global_verbs:
+      ...>     - GET
+      ...> \"\"\"
+      iex> PolicyLoader.load_policy(yaml)
+      {:ok, %{"dsl_version" => "1", "governance" => %{"global_verbs" => ["GET"]}}}
 
-      %{
-        "service" => %{
-          "name" => "ledger-api",
-          "version" => 1,
-          "environment" => "dev"
-        },
-        "verbs" => %{
-          "GET" => %{"exposure" => "public"},
-          "POST" => %{"exposure" => "authenticated"},
-          "DELETE" => %{"exposure" => "internal"}
-        },
-        "routes" => [
-          %{
-            "path" => "/accounts",
-            "verbs" => %{
-              "DELETE" => %{
-                "exposure" => "internal",
-                "narrative" => "Account deletion requires internal trust."
-              }
-            }
-          }
-        ],
-        "stealth" => %{
-          "profiles" => %{
-            "limited" => %{
-              "unauthenticated" => 405,
-              "untrusted" => 404
-            }
-          }
-        },
-        "narrative" => %{
-          "purpose" => "Define safe verb exposure for ledger operations."
-        }
-      }
+      iex> PolicyLoader.load_from_file("nonexistent.yaml")
+      {:error, "File not found: nonexistent.yaml"}
   """
 
   require Logger
 
-  @doc """
-  Loads policy from YAML file.
+  @spec load_policy(content :: String.t()) :: {:ok, map()} | {:error, String.t()}
+  def load_policy(content) when is_binary(content) do
+    trimmed = String.trim(content)
 
-  ## Parameters
+    cond do
+      trimmed == "" ->
+        {:error, "Empty policy"}
 
-    - `path`: Path to policy YAML file
+      true ->
+        case YamlElixir.read_from_string(trimmed) do
+          {:ok, %{} = policy} ->
+            Logger.info("Policy parsed from YAML content", service: get_in(policy, ["service", "name"]))
+            {:ok, policy}
 
-  ## Returns
+          {:ok, [first | _]} when is_map(first) ->
+            Logger.info("Policy parsed (first document used)", service: get_in(first, ["service", "name"]))
+            {:ok, first}
 
-    - `{:ok, policy}` - Successfully loaded and parsed policy
-    - `{:error, reason}` - File not found, parse error, or invalid format
+          {:ok, _} ->
+            {:error, "Policy must be a map"}
 
-  ## Examples
-
-      iex> PolicyLoader.load_policy("config/policy.yaml")
-      {:ok, %{"service" => %{"name" => "my-api", ...}}}
-
-      iex> PolicyLoader.load_policy("nonexistent.yaml")
-      {:error, :enoent}
-  """
-  @spec load_policy(path :: String.t()) :: {:ok, map()} | {:error, term()}
-  def load_policy(path) do
-    Logger.info("Loading policy from: #{path}")
-
-    with {:ok, content} <- File.read(path),
-         {:ok, [policy | _]} <- YamlElixir.read_from_string(content) do
-      Logger.info("Policy loaded successfully", service: get_in(policy, ["service", "name"]))
-      {:ok, policy}
-    else
-      {:error, %YamlElixir.FileNotFoundError{}} ->
-        Logger.error("Policy file not found: #{path}")
-        {:error, :file_not_found}
-
-      {:error, reason} = error ->
-        Logger.error("Failed to load policy: #{inspect(reason)}")
-        error
+          {:error, reason} ->
+            {:error, "YAML parsing error: #{inspect(reason)}"}
+        end
     end
   end
 
   @doc """
-  Reloads policy from the same path (for hot reload support).
-
-  Currently not implemented (Phase 2 feature).
+  Loads policy from disk and parses the YAML content.
   """
-  @spec reload_policy(path :: String.t()) :: {:ok, map()} | {:error, term()}
-  def reload_policy(path) do
-    load_policy(path)
+  @spec load_from_file(path :: String.t()) :: {:ok, map()} | {:error, String.t()}
+  def load_from_file(path) when is_binary(path) do
+    Logger.info("Loading policy from file: #{path}")
+
+    case File.read(path) do
+      {:ok, content} ->
+        load_policy(content)
+
+      {:error, reason} ->
+        {:error, "File not found: #{path} (#{inspect(reason)})"}
+    end
   end
 end
