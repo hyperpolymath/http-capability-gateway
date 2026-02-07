@@ -115,9 +115,23 @@ defmodule HttpCapabilityGateway.PolicyValidator do
     end
   end
 
-  defp validate_stealth(nil), do: nil
+  defp validate_stealth(policy) when is_map(policy) do
+    # Extract stealth section from policy
+    case Map.get(policy, "stealth") do
+      nil ->
+        # No stealth section - valid
+        nil
 
-  defp validate_stealth(%{"enabled" => enabled, "status_code" => status})
+      stealth when is_map(stealth) ->
+        # Validate stealth configuration
+        validate_stealth_config(stealth)
+
+      _ ->
+        "stealth: must be a map when present"
+    end
+  end
+
+  defp validate_stealth_config(%{"enabled" => enabled, "status_code" => status})
        when is_boolean(enabled) and is_integer(status) do
     cond do
       status < 100 or status > 599 ->
@@ -128,13 +142,13 @@ defmodule HttpCapabilityGateway.PolicyValidator do
     end
   end
 
-  defp validate_stealth(%{"enabled" => _enabled}) do
+  defp validate_stealth_config(%{"enabled" => _enabled}) do
     "stealth.status_code: must be an integer and present when stealth is defined"
   end
 
-  defp validate_stealth(%{"status_code" => _status}) do
+  defp validate_stealth_config(%{"status_code" => _status}) do
     "stealth.enabled: must be a boolean when stealth is defined"
   end
 
-  defp validate_stealth(_), do: "stealth: must be a map when present"
+  defp validate_stealth_config(_), do: "stealth: must be a map with 'enabled' and 'status_code' keys"
 end

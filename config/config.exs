@@ -25,7 +25,6 @@ config :logger, :console,
 
 # Disable default logger formatting in favor of JSON
 config :logger,
-  backends: [:console],
   compile_time_purge_matching: [
     [level_lower_than: :info]
   ]

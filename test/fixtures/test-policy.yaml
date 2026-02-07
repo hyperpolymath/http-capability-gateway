@@ -1,0 +1,21 @@
+dsl_version: "1"
+
+governance:
+  global_verbs:
+    - GET
+    - POST
+
+  routes:
+    - path: "/api/admin"
+      verbs:
+        - GET
+
+    - path: "/api/users/[0-9]+"
+      verbs:
+        - GET
+        - PUT
+        - DELETE
+
+stealth:
+  enabled: true
+  status_code: 404

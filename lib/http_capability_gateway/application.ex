@@ -23,9 +23,6 @@ defmodule HttpCapabilityGateway.Application do
         port = Application.get_env(:http_capability_gateway, :port, 4000)
 
         children = [
-          # Telemetry supervisor
-          {Telemetry.Metrics, metrics: telemetry_metrics()},
-
           # HTTP server with our Gateway router
           {Plug.Cowboy, scheme: :http, plug: HttpCapabilityGateway.Gateway, options: [port: port]}
         ]
@@ -46,33 +43,42 @@ defmodule HttpCapabilityGateway.Application do
   defp load_and_compile_policy do
     policy_path = Application.get_env(:http_capability_gateway, :policy_path)
 
-    Logger.info("Loading policy", path: policy_path)
+    # Skip policy loading if path is nil (useful for testing)
+    if is_nil(policy_path) do
+      Logger.info("Skipping policy load (policy_path is nil)")
+      {:ok, :ets.new(:policy_rules, [:set, :public, :named_table])}
+    else
+      Logger.info("Loading policy", path: policy_path)
 
-    with {:ok, policy} <- PolicyLoader.load_policy(policy_path),
+      with {:ok, policy} <- PolicyLoader.load_from_file(policy_path),
          :ok <- PolicyValidator.validate(policy),
          {:ok, table} <- PolicyCompiler.compile(policy) do
-      # Log policy stats
-      stats = PolicyCompiler.stats(table)
-      service_name = get_in(policy, ["service", "name"]) || "unknown"
+        # Configure stealth from DSL v1 policy
+        configure_stealth(policy)
 
-      Logging.log_policy_load(policy_path, :ok, %{
-        service: service_name,
-        total_rules: stats.total_rules,
-        global_rules: stats.global_rules,
-        route_rules: stats.route_rules,
-        verbs: Enum.map(stats.verbs, &to_string/1)
-      })
+        # Log policy stats
+        stats = PolicyCompiler.stats(table)
+        service_name = get_in(policy, ["service", "name"]) || "unknown"
 
-      Logger.info("Policy compilation complete",
-        service: service_name,
-        rules: stats.total_rules
-      )
+        Logging.log_policy_load(policy_path, :ok, %{
+          service: service_name,
+          total_rules: stats.total_rules,
+          global_rules: stats.global_rules,
+          route_rules: stats.route_rules,
+          verbs: Enum.map(stats.verbs, &to_string/1)
+        })
 
-      {:ok, table}
-    else
-      {:error, _reason} = error ->
-        Logging.log_policy_load(policy_path, error, %{})
-        error
+        Logger.info("Policy compilation complete",
+          service: service_name,
+          rules: stats.total_rules
+        )
+
+        {:ok, table}
+      else
+        {:error, _reason} = error ->
+          Logging.log_policy_load(policy_path, error, %{})
+          error
+      end
     end
   end
 
@@ -108,5 +114,27 @@ defmodule HttpCapabilityGateway.Application do
       # Error metrics
       Telemetry.Metrics.counter("http_capability_gateway.error.count", tags: [:error_type])
     ]
+  end
+
+  # Configure stealth profiles from DSL v1 policy
+  defp configure_stealth(policy) do
+    case get_in(policy, ["stealth", "enabled"]) do
+      true ->
+        status_code = get_in(policy, ["stealth", "status_code"]) || 404
+        # Store stealth profile for Gateway to use
+        stealth_profiles = %{
+          "default" => %{
+            "unauthenticated" => status_code,
+            "authenticated" => status_code,
+            "untrusted" => status_code
+          }
+        }
+        Application.put_env(:http_capability_gateway, :stealth_profiles, stealth_profiles)
+        Logger.info("Stealth mode enabled", status_code: status_code)
+
+      _ ->
+        Application.put_env(:http_capability_gateway, :stealth_profiles, %{})
+        Logger.info("Stealth mode disabled")
+    end
   end
 end

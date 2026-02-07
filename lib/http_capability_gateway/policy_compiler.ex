@@ -138,42 +138,75 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
   @spec lookup(table :: ets_table(), path :: String.t(), verb :: atom()) ::
           {:ok, CompiledRule.t()} | {:error, :no_match}
   def lookup(table, path, verb) when is_atom(verb) do
-    # Iterate through all rules and find first matching pattern
+    # Lookup strategy: route-specific rules OVERRIDE global rules
+    # 1. Check if path matches any route-specific patterns
+    # 2. If yes, only allow verbs defined for that route
+    # 3. If no route match, fall back to global rules
     case :ets.tab2list(table) do
       [] ->
         {:error, :no_match}
 
       rules ->
-        Enum.find_value(rules, {:error, :no_match}, fn {_key, rule} ->
-          if rule.verb == verb and Regex.match?(rule.path_regex, path) do
-            {:ok, rule}
-          else
-            nil
-          end
-        end)
+        # Split rules into route-specific and global
+        {route_rules, global_rules} =
+          Enum.split_with(rules, fn
+            {{:global, _}, _rule} -> false
+            _ -> true
+          end)
+
+        # Check if path matches any route pattern
+        matching_route_pattern =
+          Enum.find_value(route_rules, fn {{pattern, _verb}, rule} ->
+            if Regex.match?(rule.path_regex, path), do: pattern, else: nil
+          end)
+
+        case matching_route_pattern do
+          nil ->
+            # No route-specific pattern matches, use global rules
+            find_matching_rule(global_rules, path, verb)
+
+          pattern ->
+            # Route-specific pattern matches, only allow verbs for this route
+            # Find rule for this pattern and verb
+            case Enum.find(route_rules, fn {{p, v}, _rule} -> p == pattern and v == verb end) do
+              {_key, rule} -> {:ok, rule}
+              nil -> {:error, :no_match}
+            end
+        end
     end
+  end
+
+  # Helper to find matching rule in a list
+  defp find_matching_rule(rules, path, verb) do
+    Enum.find_value(rules, {:error, :no_match}, fn {_key, rule} ->
+      if rule.verb == verb and Regex.match?(rule.path_regex, path) do
+        {:ok, rule}
+      else
+        nil
+      end
+    end)
   end
 
   # Compile global verb rules that apply to all paths (unless overridden)
   defp compile_global_verbs(errors, policy, table) do
-    global_verbs = Map.get(policy, "verbs", %{})
+    # DSL v1 format: governance.global_verbs is a list of verb strings
+    global_verbs = get_in(policy, ["governance", "global_verbs"]) || []
 
-    Enum.reduce(global_verbs, errors, fn {verb_str, config}, acc ->
+    Enum.reduce(global_verbs, errors, fn verb_str, acc ->
       verb_atom = String.to_existing_atom(verb_str)
 
       if verb_atom not in @valid_http_verbs do
         [{:global_verb, "Invalid HTTP verb: #{verb_str}"} | acc]
       else
-        exposure = Map.get(config, "exposure")
-
-        # Global rules match any path
+        # DSL v1: global verbs have no specific exposure level, default to "public"
+        # (Gateway will handle access control based on trust levels)
         rule = %CompiledRule{
           path_pattern: ".*",
           path_regex: ~r/.*/,
           verb: verb_atom,
-          exposure: exposure,
-          stealth_profile: get_default_stealth_profile(policy),
-          narrative: Map.get(config, "narrative")
+          exposure: "public",  # Default for global verbs
+          stealth_profile: get_stealth_enabled(policy),
+          narrative: nil
         }
 
         # Use verb atom as part of key for global rules
@@ -185,31 +218,32 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
 
   # Compile route-specific overrides that take precedence over globals
   defp compile_route_overrides(errors, policy, table) do
-    routes = Map.get(policy, "routes", [])
+    # DSL v1 format: governance.routes is a list of route configs
+    routes = get_in(policy, ["governance", "routes"]) || []
 
     Enum.reduce(routes, errors, fn route, acc ->
       path_pattern = Map.get(route, "path")
-      route_verbs = Map.get(route, "verbs", %{})
+      # DSL v1: route.verbs is a list of verb strings
+      route_verbs = Map.get(route, "verbs", [])
 
       # Compile the regex pattern
       case Regex.compile(path_pattern) do
         {:ok, path_regex} ->
-          # Compile each verb override for this route
-          Enum.reduce(route_verbs, acc, fn {verb_str, config}, verb_acc ->
+          # Compile each verb for this route
+          Enum.reduce(route_verbs, acc, fn verb_str, verb_acc ->
             verb_atom = String.to_existing_atom(verb_str)
 
             if verb_atom not in @valid_http_verbs do
               [{:route_verb, "Invalid HTTP verb in route: #{verb_str}"} | verb_acc]
             else
-              exposure = Map.get(config, "exposure")
-
+              # DSL v1: route-specific verbs override globals
               rule = %CompiledRule{
                 path_pattern: path_pattern,
                 path_regex: path_regex,
                 verb: verb_atom,
-                exposure: exposure,
-                stealth_profile: Map.get(config, "stealth_profile") || get_default_stealth_profile(policy),
-                narrative: Map.get(config, "narrative")
+                exposure: "public",  # DSL v1 doesn't specify exposure per-route
+                stealth_profile: get_stealth_enabled(policy),
+                narrative: nil
               }
 
               # Route-specific rules override globals - use path pattern in key
@@ -224,12 +258,19 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
     end)
   end
 
-  # Extract default stealth profile name from policy
-  defp get_default_stealth_profile(policy) do
-    case get_in(policy, ["stealth", "default"]) do
-      nil -> nil
-      profile when is_binary(profile) -> profile
+  # Extract stealth configuration from DSL v1 policy
+  # DSL v1: stealth = %{"enabled" => bool, "status_code" => int}
+  # Return "default" if stealth is enabled, nil otherwise
+  defp get_stealth_enabled(policy) do
+    case get_in(policy, ["stealth", "enabled"]) do
+      true -> "default"  # Use "default" as profile name for enabled stealth
+      _ -> nil
     end
+  end
+
+  # Get stealth status code from DSL v1 policy
+  defp get_stealth_status_code(policy) do
+    get_in(policy, ["stealth", "status_code"]) || 404
   end
 
   @doc """

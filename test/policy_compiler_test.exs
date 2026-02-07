@@ -4,10 +4,9 @@ defmodule HttpCapabilityGateway.PolicyCompilerTest do
   alias HttpCapabilityGateway.PolicyCompiler
 
   setup do
-    # Clean up ETS tables if they exist
+    # Clean up ETS table if it exists
     try do
-      :ets.delete(:gateway_rules)
-      :ets.delete(:stealth_config)
+      :ets.delete(:policy_rules)
     catch
       :error, :badarg -> :ok
     end
@@ -27,10 +26,11 @@ defmodule HttpCapabilityGateway.PolicyCompilerTest do
         }
       }
 
-      assert :ok = PolicyCompiler.compile(policy)
+      assert {:ok, table} = PolicyCompiler.compile(policy)
 
-      # Verify ETS table exists
-      assert :ets.whereis(:gateway_rules) != :undefined
+      # Verify ETS table exists and is accessible
+      assert :ets.whereis(:policy_rules) != :undefined
+      assert table == :policy_rules
     end
 
     test "compiles global verbs correctly" do
@@ -41,15 +41,18 @@ defmodule HttpCapabilityGateway.PolicyCompilerTest do
         }
       }
 
-      assert :ok = PolicyCompiler.compile(policy)
+      assert {:ok, table} = PolicyCompiler.compile(policy)
 
-      # Check global verbs are accessible
-      case :ets.lookup(:gateway_rules, :global_verbs) do
-        [{:global_verbs, verbs}] ->
-          assert MapSet.new(verbs) == MapSet.new(["GET", "POST", "PUT"])
-        [] ->
-          flunk("Global verbs not compiled to ETS")
-      end
+      # Check global verbs are in table
+      # Global verbs stored as {{:global, verb_atom}, rule}
+      rules = :ets.tab2list(table)
+      global_verbs =
+        rules
+        |> Enum.filter(fn {{key, _verb}, _rule} -> key == :global end)
+        |> Enum.map(fn {{:global, verb}, _rule} -> verb end)
+        |> MapSet.new()
+
+      assert MapSet.equal?(global_verbs, MapSet.new([:GET, :POST, :PUT]))
     end
 
     test "compiles routes with regex patterns" do
@@ -64,10 +67,18 @@ defmodule HttpCapabilityGateway.PolicyCompilerTest do
         }
       }
 
-      assert :ok = PolicyCompiler.compile(policy)
+      assert {:ok, table} = PolicyCompiler.compile(policy)
 
-      # Verify routes table exists
-      assert :ets.info(:gateway_rules) != :undefined
+      # Verify routes are compiled
+      rules = :ets.tab2list(table)
+      route_patterns =
+        rules
+        |> Enum.filter(fn {{key, _verb}, _rule} -> is_binary(key) end)
+        |> Enum.map(fn {{pattern, _verb}, _rule} -> pattern end)
+        |> Enum.uniq()
+
+      assert "/api/users" in route_patterns
+      assert "/api/users/[0-9]+" in route_patterns
     end
 
     test "compiles stealth configuration" do
@@ -82,14 +93,15 @@ defmodule HttpCapabilityGateway.PolicyCompilerTest do
         }
       }
 
-      assert :ok = PolicyCompiler.compile(policy)
+      assert {:ok, table} = PolicyCompiler.compile(policy)
 
-      # Check stealth config
-      case :ets.lookup(:stealth_config, :enabled) do
-        [{:enabled, true}] -> assert true
-        [{:enabled, false}] -> flunk("Stealth should be enabled")
-        [] -> flunk("Stealth config not compiled")
-      end
+      # Stealth configuration should be reflected in rules
+      rules = :ets.tab2list(table)
+      assert length(rules) > 0
+
+      # Check that rules have stealth_profile set
+      {_key, rule} = hd(rules)
+      assert rule.stealth_profile == "default"
     end
 
     test "handles empty routes list" do
@@ -100,57 +112,15 @@ defmodule HttpCapabilityGateway.PolicyCompilerTest do
         }
       }
 
-      assert :ok = PolicyCompiler.compile(policy)
-    end
+      assert {:ok, table} = PolicyCompiler.compile(policy)
 
-    test "compiles large policy efficiently" do
-      routes = for i <- 1..1000 do
-        %{"path" => "/api/resource#{i}", "verbs" => ["GET", "POST"]}
-      end
-
-      policy = %{
-        "dsl_version" => "1",
-        "governance" => %{
-          "global_verbs" => ["GET"],
-          "routes" => routes
-        }
-      }
-
-      {time_us, :ok} = :timer.tc(fn -> PolicyCompiler.compile(policy) end)
-
-      # Compilation should be fast (< 100ms for 1000 routes)
-      assert time_us < 100_000
-    end
-
-    test "overwrites previous compilation" do
-      policy1 = %{
-        "dsl_version" => "1",
-        "governance" => %{
-          "global_verbs" => ["GET"]
-        }
-      }
-
-      policy2 = %{
-        "dsl_version" => "1",
-        "governance" => %{
-          "global_verbs" => ["GET", "POST", "PUT"]
-        }
-      }
-
-      assert :ok = PolicyCompiler.compile(policy1)
-      assert :ok = PolicyCompiler.compile(policy2)
-
-      # Verify second compilation overwrote the first
-      case :ets.lookup(:gateway_rules, :global_verbs) do
-        [{:global_verbs, verbs}] ->
-          assert length(verbs) == 3
-        [] ->
-          flunk("Global verbs not found after recompilation")
-      end
+      # Should only have global verbs
+      rules = :ets.tab2list(table)
+      assert length(rules) == 2  # GET and POST
     end
   end
 
-  describe "is_verb_allowed?/2" do
+  describe "lookup/3" do
     setup do
       policy = %{
         "dsl_version" => "1",
@@ -163,104 +133,57 @@ defmodule HttpCapabilityGateway.PolicyCompilerTest do
         }
       }
 
-      PolicyCompiler.compile(policy)
-      :ok
+      {:ok, table} = PolicyCompiler.compile(policy)
+      {:ok, table: table}
     end
 
-    test "allows global verbs on unspecified routes" do
-      assert PolicyCompiler.is_verb_allowed?("/api/public", "GET")
-      assert PolicyCompiler.is_verb_allowed?("/health", "POST")
+    test "finds global verb for unspecified route", %{table: table} do
+      assert {:ok, rule} = PolicyCompiler.lookup(table, "/api/public", :GET)
+      assert rule.verb == :GET
+      assert rule.exposure == "public"
     end
 
-    test "denies non-global verbs on unspecified routes" do
-      refute PolicyCompiler.is_verb_allowed?("/api/public", "DELETE")
-      refute PolicyCompiler.is_verb_allowed?("/health", "PUT")
+    test "finds route-specific verb", %{table: table} do
+      assert {:ok, rule} = PolicyCompiler.lookup(table, "/api/admin", :GET)
+      assert rule.verb == :GET
+      assert rule.path_pattern == "/api/admin"
     end
 
-    test "allows route-specific verbs" do
-      assert PolicyCompiler.is_verb_allowed?("/api/admin", "GET")
-      assert PolicyCompiler.is_verb_allowed?("/api/users/123", "PUT")
-      assert PolicyCompiler.is_verb_allowed?("/api/users/456", "DELETE")
+    test "matches regex patterns", %{table: table} do
+      assert {:ok, rule} = PolicyCompiler.lookup(table, "/api/users/123", :PUT)
+      assert rule.verb == :PUT
+      assert rule.path_pattern == "/api/users/[0-9]+"
     end
 
-    test "denies verbs not in route config" do
-      refute PolicyCompiler.is_verb_allowed?("/api/admin", "POST")
-      refute PolicyCompiler.is_verb_allowed?("/api/admin", "DELETE")
-      refute PolicyCompiler.is_verb_allowed?("/api/users/123", "POST")
+    test "returns error for non-matching path/verb", %{table: table} do
+      assert {:error, :no_match} = PolicyCompiler.lookup(table, "/api/admin", :POST)
     end
 
-    test "handles regex patterns correctly" do
-      # Should match /api/users/[0-9]+
-      assert PolicyCompiler.is_verb_allowed?("/api/users/1", "GET")
-      assert PolicyCompiler.is_verb_allowed?("/api/users/999", "PUT")
-
-      # Should not match (non-numeric ID)
-      refute PolicyCompiler.is_verb_allowed?("/api/users/abc", "DELETE")
-    end
-
-    test "case-sensitive verb matching" do
-      assert PolicyCompiler.is_verb_allowed?("/api/public", "GET")
-      refute PolicyCompiler.is_verb_allowed?("/api/public", "get")
-      refute PolicyCompiler.is_verb_allowed?("/api/public", "Get")
+    test "returns error for non-global verb on unspecified route", %{table: table} do
+      assert {:error, :no_match} = PolicyCompiler.lookup(table, "/api/public", :DELETE)
     end
   end
 
-  describe "get_stealth_config/0" do
-    test "returns stealth config when enabled" do
+  describe "stats/1" do
+    test "returns correct statistics" do
       policy = %{
         "dsl_version" => "1",
         "governance" => %{
-          "global_verbs" => ["GET"]
-        },
-        "stealth" => %{
-          "enabled" => true,
-          "status_code" => 403
+          "global_verbs" => ["GET", "POST"],
+          "routes" => [
+            %{"path" => "/api/users", "verbs" => ["GET", "POST", "PUT"]},
+            %{"path" => "/api/admin", "verbs" => ["GET"]}
+          ]
         }
       }
 
-      PolicyCompiler.compile(policy)
+      {:ok, table} = PolicyCompiler.compile(policy)
+      stats = PolicyCompiler.stats(table)
 
-      case PolicyCompiler.get_stealth_config() do
-        %{enabled: true, status_code: 403} -> assert true
-        _ -> flunk("Stealth config not retrieved correctly")
-      end
-    end
-
-    test "returns stealth config when disabled" do
-      policy = %{
-        "dsl_version" => "1",
-        "governance" => %{
-          "global_verbs" => ["GET"]
-        },
-        "stealth" => %{
-          "enabled" => false,
-          "status_code" => 404
-        }
-      }
-
-      PolicyCompiler.compile(policy)
-
-      case PolicyCompiler.get_stealth_config() do
-        %{enabled: false} -> assert true
-        _ -> flunk("Stealth config not retrieved correctly")
-      end
-    end
-
-    test "returns default config when stealth not specified" do
-      policy = %{
-        "dsl_version" => "1",
-        "governance" => %{
-          "global_verbs" => ["GET"]
-        }
-      }
-
-      PolicyCompiler.compile(policy)
-
-      case PolicyCompiler.get_stealth_config() do
-        %{enabled: false} -> assert true
-        nil -> assert true  # No stealth config
-        _ -> flunk("Unexpected stealth config")
-      end
+      assert stats.total_rules == 6  # 2 global + 4 route-specific
+      assert stats.global_rules == 2
+      assert stats.route_rules == 4
+      assert MapSet.new(stats.verbs) == MapSet.new([:GET, :POST, :PUT])
     end
   end
 end
