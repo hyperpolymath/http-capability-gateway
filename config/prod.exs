@@ -3,30 +3,22 @@ import Config
 
 # Production-specific configuration
 
-# Require environment variables in production
+# Policy file path (required)
 config :http_capability_gateway,
-  # Backend URL MUST be set in production
-  backend_url: System.fetch_env!("BACKEND_URL"),
-
-  # Policy path MUST be set in production
   policy_path: System.fetch_env!("POLICY_PATH"),
 
-  # Disable hot reload in production
-  policy_hot_reload: false,
+  # Backend URL (optional)
+  backend_url: System.get_env("BACKEND_URL"),
 
-  # Use mTLS for trust level extraction in production
-  trust_level_source: System.get_env("TRUST_LEVEL_SOURCE") || "mtls"
+  # Server port
+  port: String.to_integer(System.get_env("PORT") || "4000"),
 
-# Production logging at info level
+  # Trust level header
+  trust_level_header: System.get_env("TRUST_LEVEL_HEADER") || "x-trust-level"
+
+# Set log level to info in production
 config :logger,
   level: :info,
   compile_time_purge_matching: [
     [level_lower_than: :info]
   ]
-
-# Error reporting configuration (add Sentry, Rollbar, etc. here)
-# config :sentry,
-#   dsn: System.fetch_env!("SENTRY_DSN"),
-#   environment_name: :prod,
-#   enable_source_code_context: true,
-#   root_source_code_paths: [File.cwd!()]

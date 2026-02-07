@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: http-capability-gateway
+    ports:
+      - "8080:4000"
+    environment:
+      # Policy configuration
+      - POLICY_PATH=/app/config/policy.yaml
+
+      # Backend service URL
+      - BACKEND_URL=http://backend:4000
+
+      # Server configuration
+      - PORT=4000
+
+      # Trust level header
+      - TRUST_LEVEL_HEADER=x-trust-level
+    volumes:
+      # Mount policy file
+      - ./examples/policy-dev.yaml:/app/config/policy.yaml:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - gateway-network
+
+  # Example backend service (replace with actual backend)
+  backend:
+    image: docker.io/kennethreitz/httpbin:latest
+    container_name: backend-service
+    ports:
+      - "4000:80"
+    networks:
+      - gateway-network
+    restart: unless-stopped
+
+networks:
+  gateway-network:
+    driver: bridge
+
+# Example usage:
+#
+# Build and run:
+#   docker-compose up --build
+#
+# Run in background:
+#   docker-compose up -d
+#
+# View logs:
+#   docker-compose logs -f gateway
+#
+# Test gateway:
+#   curl http://localhost:8080/health
+#   curl http://localhost:8080/metrics
+#
+# Stop:
+#   docker-compose down

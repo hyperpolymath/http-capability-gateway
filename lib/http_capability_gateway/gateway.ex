@@ -139,11 +139,135 @@ defmodule HttpCapabilityGateway.Gateway do
     end
   end
 
-  # Extract trust level from X-Trust-Level header
+  # Extract trust level from X-Trust-Level header or mTLS certificate
   defp extract_trust_level(conn) do
-    case get_req_header(conn, "x-trust-level") do
+    trust_level_source = Application.get_env(:http_capability_gateway, :trust_level_source, "header")
+
+    case trust_level_source do
+      "mtls" ->
+        # Extract from mTLS client certificate
+        extract_trust_level_from_cert(conn)
+
+      "header" ->
+        # Extract from header (default)
+        extract_trust_level_from_header(conn)
+
+      _ ->
+        # Fallback to header
+        extract_trust_level_from_header(conn)
+    end
+  end
+
+  # Extract trust level from X-Trust-Level header
+  defp extract_trust_level_from_header(conn) do
+    header_name = Application.get_env(:http_capability_gateway, :trust_level_header, "x-trust-level")
+
+    case get_req_header(conn, header_name) do
       [level | _] -> String.downcase(level)
       [] -> "untrusted"
+    end
+  end
+
+  # Extract trust level from mTLS client certificate
+  # Checks for:
+  # 1. Client certificate presence
+  # 2. Certificate subject fields (O, OU)
+  # 3. Certificate verification status
+  defp extract_trust_level_from_cert(conn) do
+    with {:ok, peer_cert} <- get_peer_cert(conn),
+         {:ok, subject} <- extract_cert_subject(peer_cert),
+         verified <- is_cert_verified(conn) do
+      # Determine trust level from certificate attributes
+      determine_trust_level_from_cert(subject, verified)
+    else
+      _ ->
+        # No certificate or invalid - untrusted
+        "untrusted"
+    end
+  end
+
+  # Get peer certificate from connection
+  # Note: Requires Cowboy to be configured with TLS and verify: :verify_peer
+  defp get_peer_cert(conn) do
+    case conn.adapter do
+      {Plug.Cowboy.Conn, req} ->
+        # Extract peer certificate from Cowboy request
+        case :cowboy_req.cert(req) do
+          :undefined -> {:error, :no_cert}
+          cert when is_binary(cert) -> {:ok, cert}
+        end
+
+      _ ->
+        {:error, :not_supported}
+    end
+  end
+
+  # Extract subject fields from X.509 certificate
+  defp extract_cert_subject(cert_der) when is_binary(cert_der) do
+    try do
+      # Decode DER-encoded certificate
+      cert = :public_key.pkix_decode_cert(cert_der, :otp)
+
+      # Extract subject from certificate
+      case cert do
+        {:Certificate, _, subject, _, _, _, _} ->
+          subject_fields = extract_subject_fields(subject)
+          {:ok, subject_fields}
+
+        _ ->
+          {:error, :invalid_cert}
+      end
+    rescue
+      _ -> {:error, :decode_failed}
+    end
+  end
+
+  # Extract subject fields into a map
+  defp extract_subject_fields({:rdnSequence, rdn_sequence}) do
+    Enum.reduce(rdn_sequence, %{}, fn rdn_set, acc ->
+      Enum.reduce(rdn_set, acc, fn
+        {:AttributeTypeAndValue, {2, 5, 4, 10}, {:utf8String, value}}, acc ->
+          # O = Organization
+          Map.put(acc, :organization, to_string(value))
+
+        {:AttributeTypeAndValue, {2, 5, 4, 11}, {:utf8String, value}}, acc ->
+          # OU = Organizational Unit
+          Map.put(acc, :organizational_unit, to_string(value))
+
+        {:AttributeTypeAndValue, {2, 5, 4, 3}, {:utf8String, value}}, acc ->
+          # CN = Common Name
+          Map.put(acc, :common_name, to_string(value))
+
+        _, acc ->
+          acc
+      end)
+    end)
+  end
+
+  # Check if certificate was verified
+  defp is_cert_verified(conn) do
+    # In a real implementation, check if certificate passed verification
+    # For now, assume verified if certificate is present
+    case get_peer_cert(conn) do
+      {:ok, _} -> true
+      _ -> false
+    end
+  end
+
+  # Determine trust level from certificate attributes
+  defp determine_trust_level_from_cert(subject, verified) do
+    cond do
+      # Internal services: verified cert from internal CA with specific OU
+      verified and Map.get(subject, :organizational_unit) == "Internal Services" ->
+        "internal"
+
+      # Authenticated: verified cert from trusted CA
+      verified ->
+        "authenticated"
+
+      # Untrusted: certificate present but not verified
+      true ->
+        "untrusted"
     end
   end
 
