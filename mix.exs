@@ -40,6 +40,7 @@ defmodule HttpCapabilityGateway.MixProject do
       {:telemetry, "~> 1.2"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.1"},
+      {:prometheus_telemetry, "~> 0.4"},
 
       # Testing
       {:stream_data, "~> 1.0", only: :test}

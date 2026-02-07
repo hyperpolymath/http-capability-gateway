@@ -23,6 +23,9 @@ defmodule HttpCapabilityGateway.Application do
         port = Application.get_env(:http_capability_gateway, :port, 4000)
 
         children = [
+          # Prometheus metrics exporter
+          {TelemetryMetricsPrometheus.Core, metrics: telemetry_metrics()},
+
           # HTTP server with our Gateway router
           {Plug.Cowboy, scheme: :http, plug: HttpCapabilityGateway.Gateway, options: [port: port]}
         ]

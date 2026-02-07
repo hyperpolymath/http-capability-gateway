@@ -44,6 +44,21 @@ defmodule HttpCapabilityGateway.Gateway do
   plug(:match)
   plug(:dispatch)
 
+  # Health check endpoint - doesn't require policy
+  get "/health" do
+    handle_health_check(conn)
+  end
+
+  # Readiness check endpoint - verifies policy is loaded
+  get "/ready" do
+    handle_readiness_check(conn)
+  end
+
+  # Prometheus metrics endpoint
+  get "/metrics" do
+    handle_metrics(conn)
+  end
+
   # Catch-all route - enforce policy on all requests
   match _ do
     handle_request(conn)
@@ -257,5 +272,105 @@ defmodule HttpCapabilityGateway.Gateway do
         trust_level: trust_level
       }
     )
+  end
+
+  @doc """
+  Health check endpoint - returns 200 OK if service is running.
+
+  Does not check policy loading or backend connectivity - use /ready for that.
+  """
+  def handle_health_check(conn) do
+    uptime_seconds = div(System.monotonic_time(:second) - get_start_time(), 1)
+
+    response = %{
+      status: "healthy",
+      service: "http-capability-gateway",
+      version: Application.spec(:http_capability_gateway, :vsn) |> to_string(),
+      uptime_seconds: uptime_seconds
+    }
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, Jason.encode!(response))
+  end
+
+  @doc """
+  Readiness check endpoint - returns 200 OK if service is ready to handle traffic.
+
+  Checks:
+  - Policy is loaded
+  - ETS tables exist
+  """
+  def handle_readiness_check(conn) do
+    policy_table = Application.get_env(:http_capability_gateway, :policy_table)
+
+    cond do
+      is_nil(policy_table) ->
+        # Policy not loaded
+        response = %{
+          status: "not_ready",
+          reason: "Policy not loaded",
+          service: "http-capability-gateway"
+        }
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(503, Jason.encode!(response))
+
+      :ets.whereis(policy_table) == :undefined ->
+        # ETS table doesn't exist
+        response = %{
+          status: "not_ready",
+          reason: "Policy table not found",
+          service: "http-capability-gateway"
+        }
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(503, Jason.encode!(response))
+
+      true ->
+        # Ready to serve traffic
+        rule_count = :ets.info(policy_table, :size)
+
+        response = %{
+          status: "ready",
+          service: "http-capability-gateway",
+          policy_rules: rule_count
+        }
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, Jason.encode!(response))
+    end
+  end
+
+  @doc """
+  Prometheus metrics endpoint - exports metrics in Prometheus format.
+
+  Metrics include:
+  - Request counts by decision (allow/deny)
+  - Request duration histograms
+  - Policy rule counts
+  """
+  def handle_metrics(conn) do
+    metrics = TelemetryMetricsPrometheus.Core.scrape()
+
+    conn
+    |> put_resp_content_type("text/plain")
+    |> send_resp(200, metrics)
+  end
+
+  # Get application start time (monotonic time when app started)
+  defp get_start_time do
+    case :persistent_term.get({__MODULE__, :start_time}, nil) do
+      nil ->
+        start_time = System.monotonic_time(:second)
+        :persistent_term.put({__MODULE__, :start_time}, start_time)
+        start_time
+
+      start_time ->
+        start_time
+    end
   end
 end
