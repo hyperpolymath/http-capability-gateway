@@ -4,10 +4,19 @@ defmodule HttpCapabilityGateway.MixProject do
   def project do
     [
       app: :http_capability_gateway,
-      version: "0.1.0",
+      version: "1.0.0",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+
+      # Documentation
+      name: "HTTP Capability Gateway",
+      source_url: "https://github.com/hyperpolymath/http-capability-gateway",
+      homepage_url: "https://github.com/hyperpolymath/http-capability-gateway",
+      docs: [
+        main: "readme",
+        extras: ["README.md", "CONTRIBUTING.md", "SECURITY.md"]
+      ]
     ]
   end
 
@@ -43,7 +52,10 @@ defmodule HttpCapabilityGateway.MixProject do
       {:prometheus_telemetry, "~> 0.4"},
 
       # Testing
-      {:stream_data, "~> 1.0", only: :test}
+      {:stream_data, "~> 1.0", only: :test},
+
+      # Documentation
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
   end
 end
