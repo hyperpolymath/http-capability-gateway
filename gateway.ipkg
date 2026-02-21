@@ -1,0 +1,13 @@
+-- SPDX-License-Identifier: PMPL-1.0-or-later
+-- Idris2 package file for gateway ABI
+
+package gateway
+
+-- Source directory
+sourcedir = "src/abi"
+
+-- Modules to build
+modules = Protocol, Types
+
+-- Dependencies
+depends = base >= 0.7.0

@@ -1,0 +1,52 @@
+# ABI Layer - Idris2 Interface Definitions
+
+This directory contains formal interface definitions for the multi-protocol gateway using Idris2 with dependent types.
+
+## Purpose
+
+- **Correctness**: Dependent types prove protocol handling correctness at compile time
+- **Safety**: Memory layout proofs ensure FFI safety
+- **Platform Independence**: Abstract over platform-specific details
+
+## Files
+
+- `Protocol.idr` - Protocol abstraction (HTTP/gRPC/GraphQL)
+- `Types.idr` - Core type definitions with memory layout proofs
+- `Layout.idr` - Memory layout specifications for C FFI (TODO)
+- `Foreign.idr` - FFI declarations for Zig implementations (TODO)
+
+## Building
+
+Requires Idris2 compiler:
+
+```bash
+# Install Idris2
+asdf install idris2 latest
+
+# Check ABI definitions
+cd src/abi
+idris2 --check Protocol.idr
+idris2 --check Types.idr
+```
+
+## Integration
+
+The Zig FFI layer (in `ffi/zig/`) implements these interfaces. C headers are generated from Idris2 definitions to ensure type safety across the FFI boundary.
+
+## Proofs
+
+Key properties proven at the type level:
+
+1. **Access Control Soundness**: `Satisfies` type proves trust levels meet exposure requirements
+2. **Memory Safety**: Buffer bounds and lifetime proofs prevent use-after-free
+3. **Endianness Correctness**: Conversion operations proven as involutions
+4. **Parse Success**: Well-formed inputs always parse successfully (postulated, would be proven formally)
+
+## ABI Stability
+
+ABI version follows semantic versioning:
+- Major version breaks binary compatibility
+- Minor version adds backward-compatible features
+- Patch version for clarifications only
+
+Current version: **1.0.0**

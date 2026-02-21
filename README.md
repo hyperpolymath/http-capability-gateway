@@ -355,3 +355,8 @@ Built with ❤️ in Elixir by the hyperpolymath team.
 - **Issues**: https://github.com/hyperpolymath/http-capability-gateway/issues
 - **Discussions**: https://github.com/hyperpolymath/http-capability-gateway/discussions
 - **Security**: See [SECURITY.md](SECURITY.md) for reporting security vulnerabilities
+
+
+## Architecture
+
+See [TOPOLOGY.md](TOPOLOGY.md) for a visual architecture map and completion dashboard.
