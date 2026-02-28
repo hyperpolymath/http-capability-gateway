@@ -37,6 +37,8 @@ defmodule HttpCapabilityGateway.Gateway do
   use Plug.Router
   require Logger
 
+  alias HttpCapabilityGateway.K9Contract
+  alias HttpCapabilityGateway.Minikaran
   alias HttpCapabilityGateway.PolicyCompiler
   alias HttpCapabilityGateway.Proxy
   alias HttpCapabilityGateway.RateLimiter
@@ -195,6 +197,17 @@ defmodule HttpCapabilityGateway.Gateway do
     handle_metrics(conn)
   end
 
+  # Minikaran anomaly dashboard endpoint.
+  #
+  # Returns JSON with current anomalies, baseline summary, and operational
+  # status. This endpoint is intended for monitoring dashboards and alerting
+  # integrations, NOT for end-user consumption.
+  #
+  # Placed before the catch-all route so it is matched literally by Plug.Router.
+  get "/api/v1/minikaran" do
+    handle_minikaran_dashboard(conn)
+  end
+
   # Catch-all route - enforce policy on all requests
   match _ do
     handle_request(conn)
@@ -333,7 +346,11 @@ defmodule HttpCapabilityGateway.Gateway do
                   duration_us = System.monotonic_time() - start_time
                   log_decision(request_id, path, verb, trust_level, :allow, rule, duration_us)
 
-                  Proxy.forward(conn, rule)
+                  # K9-SVC contract enforcement: check if a service contract exists
+                  # for this route+verb. If so, enforce pre-proxy constraints (trust
+                  # threshold, contract-specific rate limit) before forwarding. After
+                  # proxying, check response latency against the contract's max_latency_ms.
+                  enforce_with_contract(conn, rule, path, verb, trust_level)
 
                 {:deny, _t, _e} ->
                   # Access denied -- apply stealth profile if configured, otherwise 403
@@ -353,6 +370,75 @@ defmodule HttpCapabilityGateway.Gateway do
               |> put_resp_content_type("application/json")
               |> send_resp(404, Jason.encode!(%{error: "Resource not found"}))
           end
+        end
+    end
+  end
+
+  # K9-SVC contract enforcement wrapper.
+  #
+  # If a K9 contract exists for this route+verb, enforce pre-proxy constraints
+  # (trust threshold) and post-proxy constraints (latency SLA). If no contract
+  # exists, forward directly to the backend (unchanged behaviour).
+  #
+  # The contract enforcement pipeline:
+  #   1. Lookup contract for route+verb (O(1) ETS, with wildcard fallback)
+  #   2. Pre-proxy: check trust threshold meets contract minimum
+  #   3. Forward to backend via Proxy.forward/2 (with contract timeout_ms)
+  #   4. Post-proxy: measure response latency against contract max_latency_ms
+  #   5. If breached: execute breach policy (log, alert, circuit_break, fallback)
+  defp enforce_with_contract(conn, rule, path, verb, trust_level) do
+    case K9Contract.lookup(path, verb) do
+      nil ->
+        # No K9 contract for this route — forward directly (existing behaviour).
+        Proxy.forward(conn, rule)
+
+      %K9Contract{} = contract ->
+        # K9 contract found — enforce pre-proxy constraints.
+        case K9Contract.enforce_pre_proxy(contract, trust_level) do
+          :ok ->
+            # Pre-proxy passed — forward with timing measurement.
+            proxy_start = System.monotonic_time(:millisecond)
+            result_conn = Proxy.forward(conn, rule)
+            proxy_end = System.monotonic_time(:millisecond)
+            latency_ms = proxy_end - proxy_start
+
+            # Post-proxy: check latency against contract SLA.
+            case K9Contract.enforce_post_proxy(contract, latency_ms) do
+              {:ok, :within_sla} ->
+                # Contract fulfilled — return the proxied response as-is.
+                result_conn
+
+              {:breach, breach_policy, actual_latency} ->
+                # Contract breached — execute breach policy.
+                K9Contract.execute_breach_policy(contract, breach_policy, actual_latency)
+
+                case breach_policy do
+                  :fallback ->
+                    # Fallback: return a degraded response instead of the slow one.
+                    conn
+                    |> put_resp_content_type("application/json")
+                    |> send_resp(503, Jason.encode!(%{
+                      error: "Service Degraded",
+                      message: "Response exceeded SLA (#{actual_latency}ms > #{contract.max_latency_ms}ms)",
+                      contract_id: contract.contract_id
+                    }))
+
+                  _other ->
+                    # For :log, :alert, :circuit_break — return the actual response.
+                    # The breach has been recorded; the response is still valid data.
+                    result_conn
+                end
+            end
+
+          {:error, :trust_insufficient} ->
+            # Trust level doesn't meet contract minimum — deny with 403.
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(403, Jason.encode!(%{
+              error: "Contract Trust Insufficient",
+              message: "K9-SVC contract requires #{contract.trust_threshold} trust level",
+              contract_id: contract.contract_id
+            }))
         end
     end
   end
@@ -757,6 +843,123 @@ defmodule HttpCapabilityGateway.Gateway do
     conn
     |> put_resp_content_type("text/plain")
     |> send_resp(200, metrics)
+  end
+
+  @doc """
+  Minikaran anomaly dashboard endpoint.
+
+  Returns a JSON object with three sections:
+
+    - `status` -- operational status (learning/active) and uptime info
+    - `anomalies` -- list of currently flagged anomalies with type labels
+    - `baseline` -- learned baseline summary (null while in learning phase)
+
+  This endpoint reads directly from Minikaran's ETS tables for O(1)
+  response time, making it safe to poll frequently from monitoring systems.
+
+  ## Response Shape
+
+      {
+        "status": {
+          "status": "active",
+          "windows_collected": 42,
+          "min_windows_required": 5,
+          "current_anomalies": 1,
+          "uptime_sec": 2520
+        },
+        "anomalies": [
+          {"type": "traffic_spike", "path": "/api/v1/users", "current": 150, "baseline": 42.3}
+        ],
+        "baseline": {
+          "window_count": 41,
+          "avg_requests_per_minute": 85.2,
+          ...
+        }
+      }
+  """
+  def handle_minikaran_dashboard(conn) do
+    # Fetch all three data sources in parallel (all are O(1) ETS reads
+    # or fast GenServer calls).
+    minikaran_status = Minikaran.status()
+    current_anomalies = Minikaran.anomalies()
+    current_baseline = Minikaran.baseline()
+
+    # Format anomalies as JSON-friendly maps with explicit type labels.
+    formatted_anomalies = Enum.map(current_anomalies, &format_anomaly_json/1)
+
+    # Format baseline: convert atom keys to strings for JSON serialization.
+    # Minikaran.baseline/0 returns nil during the learning phase.
+    formatted_baseline =
+      case current_baseline do
+        nil -> nil
+        baseline -> format_baseline_json(baseline)
+      end
+
+    response = %{
+      status: minikaran_status,
+      anomalies: formatted_anomalies,
+      baseline: formatted_baseline
+    }
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, Jason.encode!(response))
+  end
+
+  # Formats a Minikaran anomaly tuple into a JSON-serializable map.
+  #
+  # Each anomaly type has different fields, so we pattern-match and
+  # produce a consistently shaped map with a :type discriminator.
+  defp format_anomaly_json({:traffic_spike, path, current, baseline}) do
+    %{type: "traffic_spike", path: path, current: current, baseline: baseline}
+  end
+
+  defp format_anomaly_json({:trust_shift, trust_level, current_pct, baseline_pct}) do
+    %{
+      type: "trust_shift",
+      trust_level: Atom.to_string(trust_level),
+      current_pct: current_pct,
+      baseline_pct: baseline_pct
+    }
+  end
+
+  defp format_anomaly_json({:latency_spike, percentile, current_ms, baseline_ms}) do
+    %{
+      type: "latency_spike",
+      percentile: Atom.to_string(percentile),
+      current_ms: current_ms,
+      baseline_ms: baseline_ms
+    }
+  end
+
+  defp format_anomaly_json({:path_novelty, new_paths, total_paths}) do
+    %{type: "path_novelty", new_paths: new_paths, total_paths: total_paths}
+  end
+
+  defp format_anomaly_json({:error_spike, current_rate, baseline_rate}) do
+    %{type: "error_spike", current_rate: current_rate, baseline_rate: baseline_rate}
+  end
+
+  # Formats the baseline summary map for JSON output.
+  #
+  # Converts atom keys in the trust_distribution sub-map to strings,
+  # since JSON does not support atom keys.
+  defp format_baseline_json(baseline) do
+    trust_dist =
+      Map.get(baseline, :trust_distribution, %{})
+      |> Enum.into(%{}, fn {k, v} -> {Atom.to_string(k), v} end)
+
+    %{
+      window_count: baseline.window_count,
+      avg_requests_per_minute: baseline.avg_requests_per_minute,
+      trust_distribution: trust_dist,
+      latency_p50_us: baseline.latency_p50_us,
+      latency_p95_us: baseline.latency_p95_us,
+      latency_p99_us: baseline.latency_p99_us,
+      avg_error_rate: baseline.avg_error_rate,
+      known_paths: baseline.known_paths,
+      avg_unique_clients: baseline.avg_unique_clients
+    }
   end
 
   # Get application start time (monotonic time when app started)

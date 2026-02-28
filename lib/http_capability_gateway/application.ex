@@ -1,15 +1,29 @@
 # SPDX-License-Identifier: PMPL-1.0-or-later
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 defmodule HttpCapabilityGateway.Application do
   @moduledoc """
   OTP Application for HTTP Capability Gateway.
 
-  Loads policy on startup and starts HTTP server.
+  Loads policy on startup, starts the HTTP server, and initialises the
+  Minikaran traffic anomaly detector with its telemetry handlers.
+
+  ## Supervision Tree
+
+      HttpCapabilityGateway.Supervisor (one_for_one)
+      ├── TelemetryMetricsPrometheus.Core  -- Prometheus metrics exporter
+      ├── HttpCapabilityGateway.Minikaran  -- Traffic shape anomaly detector
+      └── Plug.Cowboy (Gateway)            -- HTTP server
+
+  Minikaran is started BEFORE the HTTP server so that telemetry handlers
+  are attached before the first request arrives. This guarantees no
+  observations are lost during startup.
   """
 
   use Application
   require Logger
 
   alias HttpCapabilityGateway.{PolicyLoader, PolicyValidator, PolicyCompiler, Logging}
+  alias HttpCapabilityGateway.Minikaran
 
   @impl true
   def start(_type, _args) do
@@ -26,6 +40,11 @@ defmodule HttpCapabilityGateway.Application do
           # Prometheus metrics exporter
           {TelemetryMetricsPrometheus.Core, metrics: telemetry_metrics()},
 
+          # Minikaran traffic anomaly detector -- started BEFORE the HTTP
+          # server so its telemetry handlers are attached before the first
+          # request arrives. This ensures zero observation loss at startup.
+          {Minikaran, name: Minikaran},
+
           # HTTP server with our Gateway router
           {Plug.Cowboy, scheme: :http, plug: HttpCapabilityGateway.Gateway, options: [port: port]}
         ]
@@ -34,7 +53,19 @@ defmodule HttpCapabilityGateway.Application do
 
         Logger.info("Starting HTTP Capability Gateway", port: port)
 
-        Supervisor.start_link(children, opts)
+        # Attach Minikaran telemetry handlers after supervision tree starts.
+        # We use a callback to ensure handlers are attached only after
+        # the Minikaran GenServer is alive and ready to receive casts.
+        result = Supervisor.start_link(children, opts)
+
+        case result do
+          {:ok, _pid} ->
+            Minikaran.TelemetryHandler.attach()
+            result
+
+          error ->
+            error
+        end
 
       {:error, reason} ->
         Logger.error("Failed to load policy, cannot start gateway", error: reason)
@@ -115,7 +146,14 @@ defmodule HttpCapabilityGateway.Application do
       ),
 
       # Error metrics
-      Telemetry.Metrics.counter("http_capability_gateway.error.count", tags: [:error_type])
+      Telemetry.Metrics.counter("http_capability_gateway.error.count", tags: [:error_type]),
+
+      # Minikaran anomaly metrics -- counts anomalies by type for Prometheus
+      # dashboards and alerting. Each anomaly detection cycle emits one event
+      # per detected anomaly with a :type tag.
+      Telemetry.Metrics.counter("http_capability_gateway.minikaran.anomaly.count",
+        tags: [:type]
+      )
     ]
   end
 

@@ -7,7 +7,7 @@
     (version "1.0.0")
     (schema-version "1.0")
     (created "2026-01-17")
-    (updated "2026-02-28")
+    (updated "2026-02-28T3")
     (project "http-capability-gateway")
     (repo "github.com/hyperpolymath/http-capability-gateway"))
 
@@ -19,23 +19,25 @@
       (OTP "27+")
       (Plug "HTTP interface")
       (Cowboy "HTTP server")
-      (ETS "Policy storage + rate limiter buckets")
+      (ETS "Policy storage + rate limiter buckets + Minikaran windows")
       (Prometheus "Metrics export")))
 
   (current-position
     (phase "production-ready")
-    (overall-completion 98)
+    (overall-completion 99)
     (components
       (policy-pipeline "100% - DSL v1 loader, validator, compiler, tiered lookup with dedicated regex ETS table")
       (http-gateway "100% - Verb enforcement, proxy, stealth, security headers, SafeTrust integration")
       (health-checks "100% - /health, /ready endpoints with dual-table and rate limiter stats")
-      (metrics "100% - Prometheus /metrics endpoint")
+      (metrics "100% - Prometheus /metrics endpoint with Minikaran anomaly counters")
       (mtls "100% - Certificate-based trust extraction")
       (containerization "100% - Containerfile, docker-compose")
       (performance "100% - Tiered ETS lookup (exact->regex->global), dedicated regex table, O(1) literal paths")
       (security-hardening "100% - OWASP headers, safe verb allowlist, trust header spoofing protection, atomic dual-table reload, specific rescue clauses")
       (safe-trust "100% - Verified trust hierarchy from proven/SafeTrust.idr, parse_trust/parse_exposure, evaluate/2")
       (rate-limiter "100% - Token bucket per trust level, ETS-backed, 429+Retry-After, X-Forwarded-For client key")
+      (minikaran "100% - Traffic shape anomaly detector with 5 detection strategies, ETS-backed sliding windows, telemetry integration, /api/v1/minikaran dashboard")
+      (k9-contracts "100% - K9-SVC service contracts: per-route obligations, guarantees, breach policies (log/alert/circuit_break/fallback), ETS-backed O(1) lookup, wired into gateway pipeline")
       (documentation "80% - ExDoc, README, TOPOLOGY, missing deployment guide"))
     (working-features
       "Policy loading and validation"
@@ -52,7 +54,10 @@
       "Atomic dual-table policy reload (zero-downtime ETS swap)"
       "SafeTrust verified trust hierarchy (replaces ad-hoc evaluate_access)"
       "Token bucket rate limiting per trust level (10/100/unlimited rps)"
-      "Rate limiter wired into plug pipeline after trust extraction"))
+      "Rate limiter wired into plug pipeline after trust extraction"
+      "Minikaran traffic anomaly detector (z-score, trust shift, latency spike, path novelty, error spike)"
+      "Minikaran telemetry handlers (access_decision, request_completed, rate_limit_exceeded)"
+      "Minikaran dashboard endpoint (/api/v1/minikaran) with anomalies, baseline, status"))
 
   (route-to-mvp
     (milestones
@@ -66,8 +71,8 @@
         (completed "2026-02-07"))
       (v1.0.0
         (status "in-progress")
-        (description "Production ready - health checks, metrics, mTLS, containers, rate limiting")
-        (progress 98)
+        (description "Production ready - health checks, metrics, mTLS, containers, rate limiting, anomaly detection")
+        (progress 99)
         (remaining
           "Deployment guide documentation"
           "Policy DSL reference documentation"))))
@@ -81,7 +86,8 @@
     (low
       "Example policy file uses old format (needs DSL v1 update)"
       "Benchmark tiered lookup vs flat scan for different policy sizes"
-      "Rate limiter bucket cleanup for stale entries (low-priority, minimal memory)"))
+      "Rate limiter bucket cleanup for stale entries (low-priority, minimal memory)"
+      "Minikaran window bucket cleanup could be more efficient with :ets.select_delete"))
 
   (critical-next-actions
     (immediate
@@ -93,9 +99,40 @@
       "Update performance tests for DSL v1")
     (this-month
       "Add request/response logging"
-      "Add rate limiter bucket cleanup (periodic sweep of stale entries)"))
+      "Add rate limiter bucket cleanup (periodic sweep of stale entries)"
+      "Add Minikaran alerting integration (webhook/email on anomaly)"))
 
   (session-history
+    (session
+      (date "2026-02-28")
+      (focus "K9-SVC service contracts")
+      (accomplishments
+        "Created K9Contract module with ETS-backed contract storage (O(1) lookup by route+verb)"
+        "Contract registration with SHA-256 content-addressable IDs (deterministic, auditable)"
+        "Pre-proxy enforcement: trust threshold checking via SafeTrust.satisfies?/2"
+        "Post-proxy enforcement: response latency measured against max_latency_ms"
+        "Four breach policies: :log, :alert, :circuit_break, :fallback"
+        "Breach counter tracking for circuit_break policy with configurable threshold"
+        "Wildcard route pattern matching (e.g., /api/users/* matches /api/users/123)"
+        "Safe string-to-atom parsing for breach policies (never String.to_atom on user input)"
+        "Wired into gateway.ex: enforce_with_contract wrapper around Proxy.forward"
+        "Telemetry events: k9_contract.registered, k9_contract.fulfilled, k9_contract.breach, k9_contract.alert, k9_contract.circuit_break")
+      (notes "K9 contracts sit above a2ml attestations — contracts declare obligations and guarantees, attestations handle identity/audit. Gateway enforces contracts by measuring actual performance against declared thresholds."))
+    (session
+      (date "2026-02-28")
+      (focus "Minikaran traffic shape anomaly detector")
+      (accomplishments
+        "Created Minikaran GenServer with 60-minute sliding window of 1-minute ETS-backed buckets"
+        "Implemented 5 anomaly detection strategies: z-score traffic spikes, trust distribution shifts, latency p95 spikes, path novelty detection, error rate spikes"
+        "Created TelemetryHandler module hooking into access_decision, request_completed, rate_limit_exceeded events"
+        "Wired Minikaran into Application supervision tree (started before HTTP server)"
+        "Attached telemetry handlers after supervision tree startup"
+        "Added /api/v1/minikaran dashboard endpoint returning JSON (anomalies, baseline, status)"
+        "Added Minikaran anomaly counter to Prometheus telemetry metrics"
+        "Statistical helpers: z-score, percentile (nearest-rank), mean, stddev"
+        "Learning phase: requires 5+ baseline windows before anomaly detection activates"
+        "All observation recording is async (GenServer.cast) -- zero request pipeline blocking")
+      (notes "Minikaran is a lightweight sentinel that observes without blocking. It learns traffic patterns and flags deviations using ETS for performance and Process.send_after for periodic checks every 30s."))
     (session
       (date "2026-02-28")
       (focus "SafeTrust integration, dedicated regex ETS table, rate limiter")
