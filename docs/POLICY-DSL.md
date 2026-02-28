@@ -1,99 +1,116 @@
-# Policy DSL Reference
+<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
 
-Complete reference for the HTTP Capability Gateway Policy DSL v1.
+# Policy DSL v1 Reference — HTTP Capability Gateway
+
+Complete reference for the YAML-based Policy DSL v1 used by the HTTP Capability
+Gateway to define verb governance rules. This document covers the schema, field
+definitions, regex route patterns, stealth mode, validation rules, and hot reload
+behaviour.
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Schema](#schema)
-3. [Fields Reference](#fields-reference)
-4. [Examples](#examples)
-5. [Best Practices](#best-practices)
-6. [Validation Rules](#validation-rules)
+2. [DSL v1 Schema](#dsl-v1-schema)
+3. [Field Reference](#field-reference)
+4. [Regex Routes vs Literal Routes](#regex-routes-vs-literal-routes)
+5. [Global Rules](#global-rules)
+6. [Stealth Mode Configuration](#stealth-mode-configuration)
+7. [Example Policy Files](#example-policy-files)
+8. [Validation Rules](#validation-rules)
+9. [Hot Reload Behaviour](#hot-reload-behaviour)
+
+---
 
 ## Overview
 
-The Policy DSL is a declarative YAML-based language for defining HTTP verb governance rules. It supports:
+The Policy DSL v1 is a declarative YAML format for defining HTTP verb governance.
+It controls which HTTP methods (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS) are
+allowed on which paths, and what happens when a request is denied.
 
-- Global verb allowlists
-- Route-specific verb overrides
-- Regex pattern matching
-- Stealth mode configuration
+**Key concepts:**
 
-## Schema
+- **Global verbs**: HTTP methods allowed on all routes by default
+- **Route overrides**: Path-specific verb lists that take precedence over globals
+- **Stealth mode**: Configurable response for denied requests (hide the API surface)
+- **Tiered lookup**: Literal paths use O(1) ETS lookup; regex patterns use O(r) scan
+
+The policy file is loaded at gateway startup and compiled into ETS tables for
+sub-microsecond enforcement on every request.
+
+---
+
+## DSL v1 Schema
 
 ### Root Structure
 
 ```yaml
-dsl_version: "1"      # Required: string, must be "1"
-governance:           # Required: object
-  global_verbs: []    # Required: array of HTTP verbs
-  routes: []          # Optional: array of route objects
-stealth:              # Optional: stealth mode configuration
-  enabled: boolean    # Required if stealth present
-  status_code: int    # Required if stealth present
+dsl_version: "1"          # Required: must be "1"
+governance:                # Required: verb governance rules
+  global_verbs: []         # Required: array of HTTP verb strings
+  routes: []               # Optional: array of route override objects
+stealth:                   # Optional: stealth mode configuration
+  enabled: boolean         # Required if stealth present
+  status_code: integer     # Required if stealth present
 ```
 
-### Route Object
+### Route Object Structure
 
 ```yaml
-path: "/api/users"    # Required: string, path or regex pattern
-verbs: []             # Required: array of HTTP verbs
+path: "/api/users"         # Required: literal path or regex pattern
+verbs: [GET, POST]         # Required: array of HTTP verb strings
 ```
 
-## Fields Reference
+---
+
+## Field Reference
 
 ### `dsl_version`
 
-**Type**: String
-**Required**: Yes
-**Valid Values**: `"1"`
+| Property | Value |
+|----------|-------|
+| Type | String |
+| Required | Yes |
+| Valid values | `"1"` |
 
-Specifies the policy format version. Must be `"1"` for this version of the gateway.
-
-**Example**:
+Specifies the policy format version. Must be the string `"1"` for this version
+of the gateway. Future versions will use `"2"`, `"3"`, etc.
 
 ```yaml
 dsl_version: "1"
 ```
 
-**Validation**:
+**Validation:**
 - Must be present
-- Must be a string
-- Must equal `"1"`
+- Must be a string (not integer `1`)
+- Must equal `"1"` exactly
 
 ---
 
 ### `governance`
 
-**Type**: Object
-**Required**: Yes
+| Property | Value |
+|----------|-------|
+| Type | Object |
+| Required | Yes |
 
-Container for all governance rules.
-
-**Structure**:
-
-```yaml
-governance:
-  global_verbs: []
-  routes: []
-```
-
-**Validation**:
-- Must be present
-- Must be an object
-- Must contain `global_verbs` field
+Container for all verb governance rules. Must contain `global_verbs` and
+optionally `routes`.
 
 ---
 
 ### `governance.global_verbs`
 
-**Type**: Array of strings
-**Required**: Yes
+| Property | Value |
+|----------|-------|
+| Type | Array of strings |
+| Required | Yes |
 
-List of HTTP verbs allowed on all routes unless overridden by route-specific rules.
+HTTP methods allowed on **all routes** unless overridden by a route-specific
+`verbs` list. These are compiled into `{:global, verb_atom}` entries in the
+main ETS table for O(1) fallback lookup (Tier 3 in the tiered lookup strategy).
 
-**Valid Verbs**:
+**Valid HTTP verbs** (case-sensitive, must be uppercase):
+
 - `GET`
 - `POST`
 - `PUT`
@@ -102,263 +119,262 @@ List of HTTP verbs allowed on all routes unless overridden by route-specific rul
 - `HEAD`
 - `OPTIONS`
 
-**Examples**:
-
 ```yaml
-# Allow only read operations globally
 governance:
   global_verbs:
     - GET
-    - HEAD
-```
-
-```yaml
-# Allow all standard verbs
-governance:
-  global_verbs:
-    - GET
-    - POST
-    - PUT
-    - DELETE
-    - PATCH
     - HEAD
     - OPTIONS
 ```
 
-**Validation**:
+**Validation:**
 - Must be present
-- Must be an array
-- Must not be empty
-- All elements must be valid HTTP verbs
-- Case-sensitive (must be uppercase)
+- Must be a non-empty array
+- All elements must be valid HTTP verb strings
+- Case-sensitive: `get` or `Get` will fail validation
 
 ---
 
 ### `governance.routes`
 
-**Type**: Array of route objects
-**Required**: No
+| Property | Value |
+|----------|-------|
+| Type | Array of route objects |
+| Required | No |
 
-List of route-specific rules that override global verbs.
-
-**Structure**:
-
-```yaml
-governance:
-  routes:
-    - path: "/api/users"
-      verbs: [GET, POST]
-    - path: "/api/admin"
-      verbs: [GET]
-```
-
-**Validation**:
-- Must be an array if present
-- Each element must be a valid route object
+Route-specific verb overrides. When a request path matches a route pattern,
+only the verbs listed for that route are allowed — global verbs do **not**
+apply for matched routes.
 
 ---
 
 ### `governance.routes[].path`
 
-**Type**: String
-**Required**: Yes (if route present)
+| Property | Value |
+|----------|-------|
+| Type | String |
+| Required | Yes (per route) |
 
-Path or regex pattern to match against request paths.
+Path pattern to match against incoming request paths. Can be a literal string
+or a regular expression pattern.
 
-**Path Types**:
-
-1. **Literal Path**:
-   ```yaml
-   path: "/api/users"
-   ```
-
-2. **Regex Pattern**:
-   ```yaml
-   path: "/api/users/[0-9]+"  # Numeric user IDs only
-   ```
-
-3. **Wildcard Pattern**:
-   ```yaml
-   path: "/api/posts/.+"      # Any post path
-   ```
-
-**Examples**:
+**Literal paths** (no regex metacharacters):
 
 ```yaml
-# Exact match
-- path: "/health"
-  verbs: [GET]
-
-# Numeric ID pattern
-- path: "/api/users/[0-9]+"
-  verbs: [GET, PUT, DELETE]
-
-# UUID pattern
-- path: "/api/resources/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-  verbs: [GET, PUT, DELETE]
-
-# Wildcard any subpath
-- path: "/api/public/.*"
-  verbs: [GET]
+- path: "/api/users"
+  verbs: [GET, POST]
 ```
 
-**Validation**:
-- Must be present for each route
+**Regex patterns** (contain `[`, `]`, `(`, `)`, `.`, `*`, `+`, `?`, `^`, `$`, `|`, or `\`):
+
+```yaml
+- path: "/api/users/[0-9]+"
+  verbs: [GET, PUT, DELETE]
+```
+
+The gateway detects whether a path is literal or regex using the pattern
+`/[\[\](){}.*+?^$|\\]/`. Literal paths are stored with `{:exact, path, verb}`
+keys for O(1) lookup. Regex paths are compiled to `Regex.t()` structs and
+stored in a dedicated regex ETS table for O(r) scanning.
+
+**Validation:**
 - Must be a non-empty string
-- Must be a valid regex pattern (if using regex)
+- If containing regex metacharacters, must compile as a valid Elixir/PCRE regex
 
 ---
 
 ### `governance.routes[].verbs`
 
-**Type**: Array of strings
-**Required**: Yes (if route present)
+| Property | Value |
+|----------|-------|
+| Type | Array of strings |
+| Required | Yes (per route) |
 
-List of HTTP verbs allowed for this specific route. **Overrides global_verbs** for this path.
-
-**Examples**:
+HTTP methods allowed for this specific route. Same valid values as `global_verbs`.
 
 ```yaml
-# Admin endpoints: read-only
 - path: "/api/admin"
-  verbs: [GET]
-
-# User endpoints: full CRUD
-- path: "/api/users/[0-9]+"
-  verbs: [GET, POST, PUT, DELETE]
-
-# Health check: GET only
-- path: "/health"
-  verbs: [GET]
+  verbs: [GET]  # Admin endpoints are read-only
 ```
 
-**Validation**:
-- Must be present for each route
-- Must be an array
-- Must not be empty
-- All elements must be valid HTTP verbs
+**Validation:**
+- Must be a non-empty array
+- All elements must be valid HTTP verb strings
 
 ---
 
 ### `stealth`
 
-**Type**: Object
-**Required**: No
+| Property | Value |
+|----------|-------|
+| Type | Object |
+| Required | No |
 
-Configuration for stealth mode, which controls the response for denied requests.
-
-**Structure**:
-
-```yaml
-stealth:
-  enabled: true
-  status_code: 404
-```
-
-**When Stealth Enabled**:
-- Denied requests return the configured status code
-- Response body is empty
-- Makes it difficult to enumerate allowed endpoints
-
-**When Stealth Disabled**:
-- Denied requests return `403 Forbidden`
-- Standard error response
-
-**Validation**:
-- If present, both `enabled` and `status_code` are required
+Stealth mode configuration. Controls what response is sent when a request
+is denied (verb not allowed for the path + trust level combination).
 
 ---
 
 ### `stealth.enabled`
 
-**Type**: Boolean
-**Required**: Yes (if stealth present)
+| Property | Value |
+|----------|-------|
+| Type | Boolean |
+| Required | Yes (if `stealth` present) |
 
-Whether stealth mode is enabled.
-
-**Examples**:
-
-```yaml
-# Stealth enabled
-stealth:
-  enabled: true
-  status_code: 404
-
-# Stealth disabled
-stealth:
-  enabled: false
-  status_code: 403
-```
-
-**Validation**:
-- Must be a boolean (`true` or `false`)
+When `true`, denied requests receive the configured `status_code` instead
+of the default `403 Forbidden`. This makes it harder for attackers to
+enumerate the API surface by probing different HTTP methods.
 
 ---
 
 ### `stealth.status_code`
 
-**Type**: Integer
-**Required**: Yes (if stealth present)
+| Property | Value |
+|----------|-------|
+| Type | Integer |
+| Required | Yes (if `stealth` present) |
 
-HTTP status code to return for denied requests when stealth is enabled.
+HTTP status code returned for denied requests when stealth is enabled.
 
-**Valid Status Codes**:
-- `200` - OK (pretend success)
-- `301` - Moved Permanently
-- `302` - Found (redirect)
-- `403` - Forbidden
-- `404` - Not Found (recommended)
-- `410` - Gone
-- `500` - Internal Server Error
-- `503` - Service Unavailable
+**Recommended values:**
 
-**Common Patterns**:
+| Code | Meaning | Use Case |
+|------|---------|----------|
+| `404` | Not Found | Best default; hides endpoint existence |
+| `410` | Gone | Pretend endpoint was removed |
+| `503` | Service Unavailable | Appears as temporary outage |
+| `403` | Forbidden | Standard denial (use when stealth.enabled = false) |
+| `200` | OK | Pretend success (advanced deception) |
 
 ```yaml
-# Pretend endpoint doesn't exist (most common)
 stealth:
   enabled: true
   status_code: 404
-
-# Pretend endpoint was removed
-stealth:
-  enabled: true
-  status_code: 410
-
-# Service unavailable (less suspicious)
-stealth:
-  enabled: true
-  status_code: 503
 ```
-
-**Validation**:
-- Must be an integer
-- Must be one of the valid status codes
 
 ---
 
-## Examples
+## Regex Routes vs Literal Routes
+
+The gateway distinguishes between literal and regex paths for performance:
+
+### Literal Paths (O(1) Lookup — Tier 1)
+
+Paths without regex metacharacters are stored with `{:exact, path, verb}` keys
+in the main ETS table. Lookup is a single hash table access.
+
+```yaml
+# These are literal paths (O(1) lookup):
+- path: "/health"
+- path: "/api/v1/users"
+- path: "/api/v1/posts"
+```
+
+### Regex Paths (O(r) Scan — Tier 2)
+
+Paths containing regex metacharacters (`[ ] ( ) { } . * + ? ^ $ | \`) are
+compiled into `Regex.t()` structs and stored in a **dedicated regex ETS table**.
+On each request, only the regex table is scanned (not the entire rule set).
+
+```yaml
+# These are regex paths (O(r) scan where r = number of regex routes):
+- path: "/api/v1/users/[0-9]+"
+- path: "/api/v1/posts/.+"
+- path: "/api/v1/resources/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+```
+
+### Performance Guideline
+
+In typical policy files, 90%+ of routes are literal paths, making the
+overwhelmingly common case an O(1) hash lookup. Keep regex routes to a
+minimum for best performance.
+
+---
+
+## Global Rules
+
+Global verbs serve as the **fallback** (Tier 3) when no route-specific rule
+matches a request. They are stored with `{:global, verb_atom}` keys in the
+main ETS table for O(1) lookup.
+
+### Lookup Priority
+
+For an incoming request to `/api/v1/users/123` with method `GET`:
+
+1. **Tier 1**: Check `{:exact, "/api/v1/users/123", :GET}` in main table -- O(1)
+2. **Tier 2**: Scan regex table for a pattern matching `/api/v1/users/123` with verb `:GET` -- O(r)
+3. **Tier 3**: Check `{:global, :GET}` in main table -- O(1)
+4. **No match**: Return `404` (or stealth response)
+
+If a route-specific rule matches at Tier 1 or Tier 2, global rules are
+**not consulted** — the route override takes full precedence.
+
+---
+
+## Stealth Mode Configuration
+
+Stealth mode is a security feature that disguises denied responses to make
+API enumeration more difficult.
+
+### Without Stealth (Default)
+
+Denied requests receive `403 Forbidden` with a clear JSON error message
+including the required and provided trust levels:
+
+```json
+{
+  "error": "Forbidden",
+  "message": "Insufficient trust level for this operation",
+  "required": "internal",
+  "provided": "untrusted"
+}
+```
+
+### With Stealth Enabled
+
+Denied requests receive the configured status code with a generic message:
+
+```json
+{
+  "error": "Not Found"
+}
+```
+
+The `status_code` is applied uniformly to all denied requests regardless
+of trust level. The profile name `"default"` is used internally.
+
+### Stealth Best Practice
+
+Use `404` as the stealth status code for most deployments. It makes the
+API surface indistinguishable from nonexistent paths, forcing attackers
+to rely on documentation or source code rather than probing.
+
+---
+
+## Example Policy Files
 
 ### Example 1: Public API with Admin Section
 
 ```yaml
 dsl_version: "1"
 governance:
-  # Most endpoints allow GET and POST
   global_verbs:
     - GET
     - POST
   routes:
-    # Admin endpoints: read-only
+    # Admin: read-only
     - path: "/api/v1/admin/.*"
       verbs: [GET]
 
-    # User management: full CRUD
+    # Users: full CRUD with numeric IDs
     - path: "/api/v1/users/[0-9]+"
       verbs: [GET, PUT, DELETE]
 
-    # Health check: GET only
+    # Health and metrics: always available
     - path: "/health"
+      verbs: [GET]
+    - path: "/metrics"
       verbs: [GET]
 
 stealth:
@@ -366,38 +382,31 @@ stealth:
   status_code: 404
 ```
 
-**Behavior**:
-- `/api/v1/public` - GET, POST allowed
-- `/api/v1/admin/users` - GET only (route override)
-- `/api/v1/users/123` - GET, PUT, DELETE (route override)
-- `/health` - GET only
-- Any denied request → 404
+**Behaviour:**
 
----
+- `GET /api/v1/posts` -- Allowed (global GET)
+- `POST /api/v1/posts` -- Allowed (global POST)
+- `DELETE /api/v1/posts` -- Denied (404 via stealth)
+- `GET /api/v1/admin/settings` -- Allowed (route override)
+- `POST /api/v1/admin/settings` -- Denied (404 via stealth, admin is GET-only)
+- `PUT /api/v1/users/123` -- Allowed (route override)
 
 ### Example 2: Strict Read-Only API
 
 ```yaml
 dsl_version: "1"
 governance:
-  # Global: read-only
   global_verbs:
     - GET
     - HEAD
     - OPTIONS
-
-  # No route overrides - all endpoints read-only
 
 stealth:
   enabled: true
   status_code: 404
 ```
 
-**Behavior**:
-- All endpoints allow only GET, HEAD, OPTIONS
-- Any POST, PUT, DELETE → 404
-
----
+All endpoints allow only safe HTTP methods. Any write attempt returns 404.
 
 ### Example 3: Microservice Gateway
 
@@ -408,38 +417,32 @@ governance:
     - GET
 
   routes:
-    # Auth service: POST for login
+    # Auth service
     - path: "/auth/login"
       verbs: [POST]
-
     - path: "/auth/logout"
       verbs: [POST]
-
     - path: "/auth/token/refresh"
       verbs: [POST]
 
-    # User service: full CRUD
+    # User service (UUID IDs)
     - path: "/users/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
       verbs: [GET, PUT, DELETE]
-
     - path: "/users"
       verbs: [GET, POST]
 
-    # Product service: public read, admin write
-    - path: "/products"
-      verbs: [GET, POST]
-
+    # Product service
     - path: "/products/[0-9]+"
       verbs: [GET, PUT, DELETE]
+    - path: "/products"
+      verbs: [GET, POST]
 
 stealth:
   enabled: true
   status_code: 404
 ```
 
----
-
-### Example 4: No Stealth Mode (Explicit Denials)
+### Example 4: Development (Permissive)
 
 ```yaml
 dsl_version: "1"
@@ -447,21 +450,19 @@ governance:
   global_verbs:
     - GET
     - POST
-
-  routes:
-    - path: "/api/admin"
-      verbs: [GET]
+    - PUT
+    - DELETE
+    - PATCH
+    - HEAD
+    - OPTIONS
 
 stealth:
   enabled: false
   status_code: 403
 ```
 
-**Behavior**:
-- Denied requests return `403 Forbidden` with error message
-- Easier to debug, but reveals API structure
-
----
+All HTTP methods allowed globally. Stealth disabled for clearer error messages
+during development.
 
 ### Example 5: Complex Regex Patterns
 
@@ -484,7 +485,7 @@ governance:
     - path: "/api/posts/[a-z0-9-]+"
       verbs: [GET, PUT, DELETE]
 
-    # API versioning
+    # Versioned API prefix (v1, v2, etc.)
     - path: "/api/v[0-9]+/.*"
       verbs: [GET, POST]
 
@@ -495,177 +496,120 @@ stealth:
 
 ---
 
-## Best Practices
-
-### 1. Principle of Least Privilege
-
-Start with minimal global verbs, expand as needed:
-
-```yaml
-# Good: start restrictive
-governance:
-  global_verbs:
-    - GET
-
-# Then add specific overrides
-routes:
-  - path: "/api/users"
-    verbs: [GET, POST]
-```
-
-### 2. Use Stealth Mode
-
-Enable stealth to prevent endpoint enumeration:
-
-```yaml
-stealth:
-  enabled: true
-  status_code: 404  # Most common
-```
-
-### 3. Explicit Route Rules
-
-Be specific with route patterns to avoid unintended matches:
-
-```yaml
-# Good: specific numeric ID
-- path: "/api/users/[0-9]+"
-  verbs: [GET, PUT, DELETE]
-
-# Bad: too broad
-- path: "/api/users/.*"
-  verbs: [GET, PUT, DELETE]
-```
-
-### 4. Document Complex Patterns
-
-Add comments for complex regex patterns:
-
-```yaml
-routes:
-  # UUID v4 pattern for resource IDs
-  - path: "/api/resources/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
-    verbs: [GET, PUT, DELETE]
-```
-
-### 5. Separate Concerns
-
-Use different policies for different environments:
-
-- `policy.dev.yaml` - Permissive for development
-- `policy.staging.yaml` - Moderate restrictions
-- `policy.prod.yaml` - Strict production rules
-
-### 6. Health and Metrics Endpoints
-
-Always allow health checks:
-
-```yaml
-routes:
-  - path: "/health"
-    verbs: [GET]
-  - path: "/metrics"
-    verbs: [GET]
-```
-
-### 7. Version Your Policies
-
-Track policy changes in version control:
-
-```bash
-git commit -m "Policy: restrict DELETE on /api/admin endpoints"
-```
-
 ## Validation Rules
 
-### Compile-Time Validation
+### Startup Validation (PolicyValidator)
 
-The gateway validates policies at startup:
+The gateway validates the full policy at startup before compiling it into
+ETS tables. If validation fails, **the gateway refuses to start**.
 
-1. **Schema Validation**:
-   - All required fields present
-   - Correct field types
-   - Valid enum values
+#### Schema Validation
 
-2. **Semantic Validation**:
-   - HTTP verbs are valid
-   - Regex patterns compile
-   - No duplicate routes
+- `dsl_version` must be present and equal to `"1"`
+- `governance` must be present and be a map
+- `governance.global_verbs` must be a non-empty array of valid HTTP verbs
+- If `governance.routes` is present, it must be an array of valid route objects
+- If `stealth` is present, both `enabled` (boolean) and `status_code` (integer) are required
 
-3. **Performance Validation**:
-   - Policy size reasonable (< 10,000 routes recommended)
+#### Semantic Validation
 
-### Runtime Validation
+- All HTTP verbs must be valid uppercase strings: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
+- All route `path` patterns must compile as valid Elixir/PCRE regular expressions
+- Stealth `status_code` must be a recognized HTTP status code
 
-During request processing:
+### Compilation Validation (PolicyCompiler)
 
-1. **Path Matching**:
-   - Check if path matches any route pattern
-   - Use first matching route
+During compilation, additional checks are performed:
 
-2. **Verb Checking**:
-   - If route matches, check route verbs
-   - Otherwise, check global verbs
-
-3. **Stealth Response**:
-   - If denied, return stealth status or 403
-
-### Policy Validation Tool
-
-Validate policy before deployment:
-
-```bash
-# Validate policy file
-mix run -e "HttpCapabilityGateway.PolicyValidator.validate_file(\"policy.yaml\")"
-
-# Expected output on success:
-# :ok
-
-# Expected output on failure:
-# {:error, "governance.global_verbs: must be present"}
-```
-
-## Error Messages
+- HTTP verbs are converted to atoms via `String.to_existing_atom/1` (only pre-existing
+  atoms from the `@valid_http_verbs` list succeed)
+- Regex patterns are compiled via `Regex.compile/1`
+- Invalid verbs or patterns produce error tuples; if any errors occur, compilation
+  fails and the existing policy tables remain active
 
 ### Common Validation Errors
 
-**Missing `dsl_version`**:
 ```
-Error: dsl_version: must be present and equal to "1"
+dsl_version: must be present and equal to "1"
 ```
+Missing or invalid `dsl_version` field.
 
-**Invalid HTTP verb**:
 ```
-Error: governance.global_verbs: invalid verb "FETCH" (valid: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)
+governance.global_verbs: must not be empty
 ```
+The `global_verbs` array is empty or missing.
 
-**Empty `global_verbs`**:
 ```
-Error: governance.global_verbs: must not be empty
+governance.global_verbs: invalid verb "FETCH"
 ```
+An unrecognized HTTP method was used. Valid methods are GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS.
 
-**Invalid stealth status code**:
 ```
-Error: stealth.status_code: invalid status code 999 (valid: 200, 301, 302, 403, 404, 410, 500, 503)
+governance.routes[2].path: invalid regex pattern "/api/users/[0-9+"
 ```
+A route path contains a regex syntax error (unclosed bracket in this case).
 
-**Invalid regex pattern**:
-```
-Error: governance.routes[2].path: invalid regex pattern "/api/users/[0-9+"
-```
+### Policy Validation Tool
 
-## Policy Migration
-
-### From DSL v0 (Future)
-
-When DSL v2 is released, use the migration tool:
+Validate a policy file before deployment without starting the gateway:
 
 ```bash
-mix run -e "HttpCapabilityGateway.PolicyMigrator.migrate(\"policy.v1.yaml\", \"policy.v2.yaml\")"
+mix run -e '
+  case HttpCapabilityGateway.PolicyLoader.load_from_file("policy.yaml") do
+    {:ok, policy} ->
+      case HttpCapabilityGateway.PolicyValidator.validate(policy) do
+        :ok -> IO.puts("Policy is valid")
+        {:error, reason} -> IO.puts("Validation failed: #{reason}")
+      end
+    {:error, reason} ->
+      IO.puts("Load failed: #{reason}")
+  end
+'
 ```
+
+---
+
+## Hot Reload Behaviour
+
+### Atomic Dual-Table Swap
+
+When a policy reload is triggered, the gateway performs a zero-downtime
+atomic swap of **both** ETS tables (main + regex):
+
+1. **Create temporary tables**: New main and regex tables are created with
+   unique monotonic-time-based names
+
+2. **Compile into temporary tables**: All policy rules are compiled into
+   the appropriate temporary table (literal paths to main, regex paths to
+   regex table, global rules to main)
+
+3. **On success** (zero compilation errors):
+   - Application environment `:policy_table` is updated to the new main table name
+   - Application environment `:policy_regex_table` is updated to the new regex table name
+   - Old main and regex tables are deleted
+   - All in-flight requests seamlessly transition to the new tables
+
+4. **On failure** (any compilation error):
+   - Both temporary tables are deleted
+   - Old tables and application environment references remain unchanged
+   - The last known good policy continues to serve traffic
+
+### Guarantees
+
+- **Zero downtime**: The app env reference swap is a single atomic operation
+  from the perspective of concurrent readers. There is no moment where the
+  reference points to a nonexistent or partially-loaded table.
+
+- **Rollback on failure**: If the new policy fails validation or compilation,
+  the old policy remains active. No service disruption occurs.
+
+- **Dual-table consistency**: Both the main table and regex table are swapped
+  as a pair. It is impossible to have the main table from policy version N
+  paired with the regex table from policy version N-1.
+
+---
 
 ## Support
 
-For policy questions:
-- **GitHub Discussions**: https://github.com/hyperpolymath/http-capability-gateway/discussions
-- **Issues**: https://github.com/hyperpolymath/http-capability-gateway/issues
+- **Issues**: <https://github.com/hyperpolymath/http-capability-gateway/issues>
+- **Discussions**: <https://github.com/hyperpolymath/http-capability-gateway/discussions>

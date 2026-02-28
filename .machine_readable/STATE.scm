@@ -7,7 +7,7 @@
     (version "1.0.0")
     (schema-version "1.0")
     (created "2026-01-17")
-    (updated "2026-02-28T4")
+    (updated "2026-02-28T5")
     (project "http-capability-gateway")
     (repo "github.com/hyperpolymath/http-capability-gateway"))
 
@@ -24,7 +24,7 @@
 
   (current-position
     (phase "production-ready")
-    (overall-completion 99)
+    (overall-completion 100)
     (components
       (policy-pipeline "100% - DSL v1 loader, validator, compiler, tiered lookup with dedicated regex ETS table")
       (http-gateway "100% - Verb enforcement, proxy, stealth, security headers, SafeTrust integration")
@@ -40,7 +40,7 @@
       (k9-contracts "100% - K9-SVC service contracts: per-route obligations, guarantees, breach policies (log/alert/circuit_break/fallback), ETS-backed O(1) lookup, wired into gateway pipeline")
       (a2ml-attestations "100% - Content-addressable SHA-256 audit records, sensitive data redaction, verify/1 tamper detection, issuer provenance, typed attestation envelopes")
       (circuit-breaker "100% - GenServer+ETS FSM (closed/open/half-open), configurable thresholds and timeouts, wired into K9 breach policy and gateway pipeline, telemetry events")
-      (documentation "90% - ExDoc, README, TOPOLOGY, K9-SVC-EXPLAINED, A2ML-EXPLAINED, missing deployment guide"))
+      (documentation "100% - ExDoc, README, TOPOLOGY, K9-SVC-EXPLAINED, A2ML-EXPLAINED, DEPLOYMENT.md, POLICY-DSL.md"))
     (working-features
       "Policy loading and validation"
       "HTTP verb enforcement with safe verb allowlist (no atom crashes)"
@@ -75,12 +75,9 @@
         (description "DSL v1 implementation, test fixes")
         (completed "2026-02-07"))
       (v1.0.0
-        (status "in-progress")
-        (description "Production ready - health checks, metrics, mTLS, containers, rate limiting, anomaly detection")
-        (progress 99)
-        (remaining
-          "Deployment guide documentation"
-          "Policy DSL reference documentation"))))
+        (status "completed")
+        (description "Production ready - health checks, metrics, mTLS, containers, rate limiting, anomaly detection, full documentation")
+        (completed "2026-02-28"))))
 
   (blockers-and-issues
     (critical)
@@ -96,18 +93,26 @@
 
   (critical-next-actions
     (immediate
-      "Bump version to 1.0.0"
-      "Create v1.0.0 release")
+      "Tag v1.0.0 release on GitHub")
     (this-week
-      "Write deployment guide (DEPLOYMENT.md)"
-      "Write policy DSL reference (docs/POLICY-DSL.md)"
-      "Update performance tests for DSL v1")
+      "Update performance tests for DSL v1"
+      "Update property tests for DSL v1")
     (this-month
       "Add request/response logging"
       "Add rate limiter bucket cleanup (periodic sweep of stale entries)"
       "Add Minikaran alerting integration (webhook/email on anomaly)"))
 
   (session-history
+    (session
+      (date "2026-02-28")
+      (focus "v1.0.0 release: deployment guide, policy DSL reference, version bump")
+      (accomplishments
+        "Rewrote DEPLOYMENT.md with complete v1.0.0 coverage: container (Podman/Docker), bare-metal (OTP release + systemd), policy setup, health checks, monitoring (Prometheus + Minikaran), security (mTLS, trust levels, rate limiter, OWASP headers), troubleshooting"
+        "Rewrote POLICY-DSL.md with complete DSL v1 reference: schema, field definitions, regex vs literal routes, tiered lookup strategy, global rules, stealth mode, validation rules, hot reload atomic dual-table swap behaviour"
+        "Verified version 1.0.0 in mix.exs and STATE.scm metadata"
+        "Updated STATE.scm: v1.0.0 milestone completed, documentation 100%, overall-completion 100"
+        "Added SPDX headers to both documentation files")
+      (notes "All v1.0.0 deliverables complete. Gateway is production-ready with full documentation."))
     (session
       (date "2026-02-28")
       (focus "A2ML attestations, circuit breaker, completeness audit fixes")
