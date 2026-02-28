@@ -7,7 +7,7 @@
     (version "1.0.0")
     (schema-version "1.0")
     (created "2026-01-17")
-    (updated "2026-02-28T3")
+    (updated "2026-02-28T4")
     (project "http-capability-gateway")
     (repo "github.com/hyperpolymath/http-capability-gateway"))
 
@@ -38,7 +38,9 @@
       (rate-limiter "100% - Token bucket per trust level, ETS-backed, 429+Retry-After, X-Forwarded-For client key")
       (minikaran "100% - Traffic shape anomaly detector with 5 detection strategies, ETS-backed sliding windows, telemetry integration, /api/v1/minikaran dashboard")
       (k9-contracts "100% - K9-SVC service contracts: per-route obligations, guarantees, breach policies (log/alert/circuit_break/fallback), ETS-backed O(1) lookup, wired into gateway pipeline")
-      (documentation "80% - ExDoc, README, TOPOLOGY, missing deployment guide"))
+      (a2ml-attestations "100% - Content-addressable SHA-256 audit records, sensitive data redaction, verify/1 tamper detection, issuer provenance, typed attestation envelopes")
+      (circuit-breaker "100% - GenServer+ETS FSM (closed/open/half-open), configurable thresholds and timeouts, wired into K9 breach policy and gateway pipeline, telemetry events")
+      (documentation "90% - ExDoc, README, TOPOLOGY, K9-SVC-EXPLAINED, A2ML-EXPLAINED, missing deployment guide"))
     (working-features
       "Policy loading and validation"
       "HTTP verb enforcement with safe verb allowlist (no atom crashes)"
@@ -57,7 +59,10 @@
       "Rate limiter wired into plug pipeline after trust extraction"
       "Minikaran traffic anomaly detector (z-score, trust shift, latency spike, path novelty, error spike)"
       "Minikaran telemetry handlers (access_decision, request_completed, rate_limit_exceeded)"
-      "Minikaran dashboard endpoint (/api/v1/minikaran) with anomalies, baseline, status"))
+      "Minikaran dashboard endpoint (/api/v1/minikaran) with anomalies, baseline, status"
+      "A2ML attestation module (SHA-256 envelopes, redaction, verify/1)"
+      "Circuit breaker FSM (closed/open/half-open with ETS hot path)"
+      "K9 breach policy :circuit_break now trips real circuit breaker"))
 
   (route-to-mvp
     (milestones
@@ -103,6 +108,19 @@
       "Add Minikaran alerting integration (webhook/email on anomaly)"))
 
   (session-history
+    (session
+      (date "2026-02-28")
+      (focus "A2ML attestations, circuit breaker, completeness audit fixes")
+      (accomplishments
+        "Created a2ml.ex attestation module (392 lines): SHA-256 content-addressable envelopes, sensitive data redaction, verify/1 tamper detection"
+        "Created circuit_breaker.ex GenServer+ETS FSM (732 lines): closed/open/half-open states, configurable thresholds, Process.send_after half-open timer"
+        "Wired CircuitBreaker into application supervision tree"
+        "Wired K9Contract :circuit_break breach policy to trip real circuit breaker"
+        "Added CircuitBreaker.allow?/1 check in gateway pipeline before proxying"
+        "Fixed compiler warning: removed @doc from private safe_verb/1"
+        "Fixed compiler warning: removed unused get_stealth_status_code/1"
+        "Created K9-SVC-EXPLAINED.adoc and A2ML-EXPLAINED.adoc narrative documentation")
+      (notes "Completeness audit found 3 gaps: missing a2ml module, non-functional circuit breaker, compiler warnings. All fixed."))
     (session
       (date "2026-02-28")
       (focus "K9-SVC service contracts")
