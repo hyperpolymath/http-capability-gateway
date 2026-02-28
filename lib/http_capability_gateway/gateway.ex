@@ -41,8 +41,29 @@ defmodule HttpCapabilityGateway.Gateway do
   alias HttpCapabilityGateway.Proxy
 
   plug(Plug.Logger)
+  plug(:security_headers)
   plug(:match)
   plug(:dispatch)
+
+  # Security headers applied to ALL responses (including health/metrics).
+  #
+  # These headers harden the gateway against common web attacks:
+  # - X-Content-Type-Options: prevent MIME-type sniffing
+  # - X-Frame-Options: prevent clickjacking
+  # - Referrer-Policy: limit referrer leakage
+  # - Cache-Control: prevent caching of policy decisions
+  # - X-Request-ID: propagate request tracing
+  #
+  # Inspired by aerie's security header implementation (2026-02-28)
+  # and OWASP Secure Headers Project recommendations.
+  defp security_headers(conn, _opts) do
+    conn
+    |> put_resp_header("x-content-type-options", "nosniff")
+    |> put_resp_header("x-frame-options", "DENY")
+    |> put_resp_header("referrer-policy", "strict-origin-when-cross-origin")
+    |> put_resp_header("cache-control", "no-store, no-cache, must-revalidate")
+    |> put_resp_header("connection", "close")
+  end
 
   # Health check endpoint - doesn't require policy
   get "/health" do

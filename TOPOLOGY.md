@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
 <!-- TOPOLOGY.md — Project architecture map and completion dashboard -->
-<!-- Last updated: 2026-02-19 -->
+<!-- Last updated: 2026-02-28 -->
 
 # http-capability-gateway — Project Topology
 
@@ -16,6 +16,11 @@
                         ┌─────────────────────────────────────────┐
                         │           GATEWAY CORE (ELIXIR)         │
                         │    (Governance Layer / Enforcement)     │
+                        │                                         │
+                        │  ┌─────────────────────────────────┐    │
+                        │  │  Security Headers Plug           │    │
+                        │  │  (OWASP: nosniff, DENY, etc.)   │    │
+                        │  └─────────────────────────────────┘    │
                         └──────────┬───────────────────┬──────────┘
                                    │                   │
                                    ▼                   ▼
@@ -23,10 +28,13 @@
                         │ POLICY ENGINE         │  │ LOGGING & AUDIT                │
                         │ - Loader (DSL v1)     │  │ - Decision Context             │
                         │ - Validator           │  │ - Structured JSON Logs         │
-                        │ - Compiler            │  │ - Narrative Metadata           │
-                        └──────────┬────────────┘  └──────────┬─────────────────────┘
-                                   │                          │
-                                   └────────────┬─────────────┘
+                        │ - Compiler (Tiered)   │  │ - Narrative Metadata           │
+                        │   T1: Exact O(1)      │  │ - Telemetry Events             │
+                        │   T2: Regex O(r)      │  └──────────┬─────────────────────┘
+                        │   T3: Global O(1)     │              │
+                        └──────────┬────────────┘              │
+                                   │                           │
+                                   └────────────┬──────────────┘
                                                 ▼
                         ┌─────────────────────────────────────────┐
                         │           UPSTREAM SERVICES             │
@@ -48,21 +56,29 @@ COMPONENT                          STATUS              NOTES
 CORE GATEWAY
   Policy Loader (DSL v1)            ██████████ 100%    YAML spec parsing stable
   Validator                         ██████████ 100%    Schema validation verified
-  Compiler                          ██████████ 100%    Rule compilation active
+  Compiler (Tiered Lookup)          ██████████ 100%    O(1) exact + O(r) regex + O(1) global
   Enforcement Engine                ██████████ 100%    Verb gating verified
+  Security Headers                  ██████████ 100%    OWASP hardened (nosniff, DENY, etc.)
 
 INTERFACES & LOGS
   HTTP Proxy Layer                  ████████░░  80%    Scaling logic refining
   Structured JSON Logs              ██████████ 100%    Audit-grade logs stable
   Stealth Profiles                  ██████░░░░  60%    Limited profile active
+  Prometheus Metrics                ██████████ 100%    Telemetry export active
+
+HEALTH & TRUST
+  Health Check (/health)            ██████████ 100%    Uptime, version, status
+  Readiness Check (/ready)          ██████████ 100%    Policy + ETS validation
+  mTLS Trust Extraction             ██████████ 100%    Certificate-based trust levels
+  Trust Header Extraction           ██████████ 100%    X-Trust-Level header support
 
 REPO INFRASTRUCTURE
   Justfile Automation               ██████████ 100%    Standard build/run tasks
-  .machine_readable/                ██████████ 100%    STATE.adoc tracking
-  Docker Compose                    ██████████ 100%    Full stack deployment
+  .machine_readable/                ██████████ 100%    STATE.scm tracking
+  Containerfile                     ██████████ 100%    Chainguard-based deployment
 
 ─────────────────────────────────────────────────────────────────────────────
-OVERALL:                            █████████░  ~90%   MVP stable and functional
+OVERALL:                            █████████░  ~97%   Production-ready, optimised
 ```
 
 ## Key Dependencies

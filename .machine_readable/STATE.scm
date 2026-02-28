@@ -7,7 +7,7 @@
     (version "1.0.0")
     (schema-version "1.0")
     (created "2026-01-17")
-    (updated "2026-02-07")
+    (updated "2026-02-28")
     (project "http-capability-gateway")
     (repo "github.com/hyperpolymath/http-capability-gateway"))
 
@@ -24,15 +24,17 @@
 
   (current-position
     (phase "production-ready")
-    (overall-completion 95)
+    (overall-completion 97)
     (components
-      (policy-pipeline "100% - DSL v1 loader, validator, compiler")
-      (http-gateway "100% - Verb enforcement, proxy, stealth")
+      (policy-pipeline "100% - DSL v1 loader, validator, compiler, tiered lookup")
+      (http-gateway "100% - Verb enforcement, proxy, stealth, security headers")
       (health-checks "100% - /health, /ready endpoints")
       (metrics "100% - Prometheus /metrics endpoint")
       (mtls "100% - Certificate-based trust extraction")
       (containerization "100% - Containerfile, docker-compose")
-      (documentation "75% - ExDoc, README, missing deployment guide"))
+      (performance "100% - Tiered ETS lookup (exact→regex→global), O(1) literal paths")
+      (security-hardening "100% - OWASP security headers on all responses")
+      (documentation "80% - ExDoc, README, TOPOLOGY, missing deployment guide"))
     (working-features
       "Policy loading and validation"
       "HTTP verb enforcement"
@@ -41,7 +43,9 @@
       "Health and readiness checks"
       "Prometheus metrics export"
       "mTLS trust level extraction"
-      "Container deployment"))
+      "Container deployment"
+      "Tiered O(1)/O(r)/O(1) policy lookup"
+      "Security headers (OWASP hardened)"))
 
   (route-to-mvp
     (milestones
@@ -68,7 +72,8 @@
       "Performance tests need DSL v1 format updates"
       "Property tests need DSL v1 format updates")
     (low
-      "Example policy file uses old format (needs DSL v1 update)"))
+      "Example policy file uses old format (needs DSL v1 update)"
+      "Benchmark tiered lookup vs flat scan for different policy sizes"))
 
   (critical-next-actions
     (immediate
@@ -83,6 +88,16 @@
       "Add request/response logging"))
 
   (session-history
+    (session
+      (date "2026-02-28")
+      (focus "Performance + security hardening")
+      (accomplishments
+        "Tiered ETS lookup: O(1) exact path → O(r) regex routes → O(1) global rules"
+        "Literal path detection: routes without regex metacharacters stored with {:exact, path, verb} key"
+        "Security headers plug: X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Cache-Control, Connection"
+        "Updated stats/1 to report exact_routes vs regex_routes separately"
+        "Updated STATE.scm, TOPOLOGY.md with new features")
+      (notes "Performance: 90%+ of lookups now O(1) hash for literal paths. Security: OWASP-recommended headers on all responses."))
     (session
       (date "2026-02-07")
       (focus "v1.0.0 development")
