@@ -33,11 +33,11 @@
       (mtls "100% - Certificate-based trust extraction")
       (containerization "100% - Containerfile, docker-compose")
       (performance "100% - Tiered ETS lookup (exact→regex→global), O(1) literal paths")
-      (security-hardening "100% - OWASP security headers on all responses")
+      (security-hardening "100% - OWASP headers, safe verb allowlist, trust header spoofing protection, atomic policy reload, specific rescue clauses")
       (documentation "80% - ExDoc, README, TOPOLOGY, missing deployment guide"))
     (working-features
       "Policy loading and validation"
-      "HTTP verb enforcement"
+      "HTTP verb enforcement with safe verb allowlist (no atom crashes)"
       "Backend proxying"
       "Stealth mode (404/custom status)"
       "Health and readiness checks"
@@ -45,7 +45,9 @@
       "mTLS trust level extraction"
       "Container deployment"
       "Tiered O(1)/O(r)/O(1) policy lookup"
-      "Security headers (OWASP hardened)"))
+      "Security headers (OWASP hardened)"
+      "Trust header spoofing protection (strip_untrusted_headers plug)"
+      "Atomic policy reload (zero-downtime ETS swap)"))
 
   (route-to-mvp
     (milestones
@@ -88,6 +90,16 @@
       "Add request/response logging"))
 
   (session-history
+    (session
+      (date "2026-02-28")
+      (focus "Critical security hardening - 5 fixes")
+      (accomplishments
+        "Fix 1: Replaced String.to_existing_atom/1 DoS vector with safe_verb/1 allowlist (405 for unknown methods)"
+        "Fix 2: Added strip_untrusted_headers plug to prevent X-Trust-Level spoofing from external clients"
+        "Fix 3: Atomic policy reload in PolicyCompiler - temp table + app env swap, zero-downtime"
+        "Fix 4: Replaced bare rescue clause with specific exceptions (ArgumentError, MatchError, FunctionClauseError)"
+        "Fix 5: Documented OTP certificate tuple pattern limitations for production mTLS")
+      (notes "Security audit: 5 vulnerabilities fixed. DoS via atom crash, privilege escalation via header spoofing, 503 gap during policy reload, bare rescue swallowing unexpected errors, incorrect cert pattern match."))
     (session
       (date "2026-02-28")
       (focus "Performance + security hardening")

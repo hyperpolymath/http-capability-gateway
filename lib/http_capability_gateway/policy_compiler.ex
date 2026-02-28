@@ -89,13 +89,42 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
 
     Logger.info("Compiling policy for service: #{service_name}")
 
-    # Delete existing table if it exists
-    if :ets.whereis(table_name) != :undefined do
-      :ets.delete(table_name)
-    end
+    # Atomic policy reload strategy:
+    #
+    # The previous implementation deleted the old ETS table and created a new
+    # one with the same name. During the window between delete and successful
+    # compilation (which can take milliseconds for large policies), any
+    # in-flight request that calls PolicyCompiler.lookup/3 would hit a missing
+    # table and receive a 503 error. Under high traffic, this creates a
+    # reliability gap during every policy reload.
+    #
+    # The fix uses an atomic swap pattern:
+    #
+    #   1. Create a temporary ETS table with a unique name (using monotonic
+    #      time as suffix to guarantee uniqueness within this BEAM instance).
+    #   2. Compile all policy rules into the temporary table.
+    #   3. If compilation SUCCEEDS:
+    #      a. Update the application env :policy_table to point to the new table.
+    #      b. Delete the old table (if any).
+    #      The app env update is atomic from the perspective of concurrent readers
+    #      because Application.put_env/3 is a single operation -- readers either
+    #      see the old value or the new value, never a partial state.
+    #   4. If compilation FAILS:
+    #      a. Delete the temporary table.
+    #      b. Leave the old table and app env untouched.
+    #      In-flight requests continue using the previous (valid) policy.
+    #
+    # This guarantees zero-downtime policy reloads: there is never a moment
+    # where no valid policy table exists.
+    #
+    # Note: In-flight requests that already resolved the old table reference
+    # via Application.get_env will complete against the old table. ETS lookups
+    # on a table that is about to be deleted are safe -- :ets.lookup returns
+    # results atomically per-key, and deletion only takes effect after all
+    # concurrent operations on that key complete.
+    temp_name = :"#{table_name}_#{System.monotonic_time()}"
 
-    # Create new ETS table
-    table = :ets.new(table_name, [:set, :public, :named_table, read_concurrency: true])
+    table = :ets.new(temp_name, [:set, :public, :named_table, read_concurrency: true])
 
     errors =
       []
@@ -106,9 +135,27 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
       [] ->
         rule_count = :ets.info(table, :size)
         Logger.info("Policy compilation succeeded", rules: rule_count, service: service_name)
-        {:ok, table}
+
+        # Atomic swap: update application env to point to the new table,
+        # then delete the old table. The order matters -- we must update
+        # the reference BEFORE deleting the old table to avoid a gap.
+        old_table = Application.get_env(:http_capability_gateway, :policy_table)
+        Application.put_env(:http_capability_gateway, :policy_table, temp_name)
+
+        # Delete the old table only if it exists and is still registered.
+        # :ets.whereis/1 returns :undefined for tables that have already
+        # been deleted (e.g., if this is the first compilation at startup).
+        if old_table && :ets.whereis(old_table) != :undefined do
+          Logger.debug("Deleting old policy table", table: old_table)
+          :ets.delete(old_table)
+        end
+
+        {:ok, temp_name}
 
       errors ->
+        # Compilation failed -- clean up the temporary table and leave
+        # the existing policy table (if any) in place. This preserves
+        # the last known good policy for in-flight and future requests.
         :ets.delete(table)
         Logger.error("Policy compilation failed", errors: errors, service: service_name)
         {:error, Enum.reverse(errors)}

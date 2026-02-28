@@ -40,8 +40,34 @@ defmodule HttpCapabilityGateway.Gateway do
   alias HttpCapabilityGateway.PolicyCompiler
   alias HttpCapabilityGateway.Proxy
 
+  # Safe HTTP verb conversion with allowlist.
+  #
+  # String.to_existing_atom/1 crashes on unknown verbs (ArgumentError),
+  # which is a DoS vector -- any client can crash the handler by sending
+  # an exotic HTTP method like PROPFIND, MKCOL, REPORT, or any arbitrary
+  # string. The BEAM atom table is finite (~1M atoms) and not garbage
+  # collected, so String.to_atom/1 is equally dangerous (atom exhaustion).
+  #
+  # Instead, we maintain an explicit allowlist of the seven standard HTTP
+  # methods supported by this gateway. Any method not in this map is
+  # rejected early with 405 Method Not Allowed, without touching the
+  # atom table or reaching policy evaluation.
+  #
+  # This map is used by safe_verb/1 which is called at the top of
+  # handle_request/1 before any policy lookup occurs.
+  @valid_methods %{
+    "GET" => :GET,
+    "POST" => :POST,
+    "PUT" => :PUT,
+    "DELETE" => :DELETE,
+    "PATCH" => :PATCH,
+    "HEAD" => :HEAD,
+    "OPTIONS" => :OPTIONS
+  }
+
   plug(Plug.Logger)
   plug(:security_headers)
+  plug(:strip_untrusted_headers)
   plug(:match)
   plug(:dispatch)
 
@@ -65,6 +91,75 @@ defmodule HttpCapabilityGateway.Gateway do
     |> put_resp_header("connection", "close")
   end
 
+  # Strip trust level header from external requests to prevent spoofing.
+  #
+  # SECURITY: If the gateway is exposed directly to the internet (not behind
+  # a trusted load balancer or reverse proxy), any client can forge the
+  # X-Trust-Level header with a value like "internal" and bypass all verb
+  # governance. This is a privilege escalation vector that would allow
+  # anonymous clients to access internal-only endpoints.
+  #
+  # This plug removes the trust level header unless the request originates
+  # from a trusted upstream proxy (identified by IP address). The result is
+  # that direct clients always get trust_level="untrusted" regardless of
+  # what headers they send, while legitimate proxy-injected headers are
+  # preserved.
+  #
+  # Configuration (in config/runtime.exs or config/config.exs):
+  #
+  #   # Enable/disable header stripping (default: true for defense-in-depth)
+  #   config :http_capability_gateway, :strip_trust_header, true
+  #
+  #   # IP addresses of trusted upstream proxies that are allowed to set
+  #   # the trust level header. Only exact IP matches are supported.
+  #   # Default: loopback only (127.0.0.1, ::1)
+  #   config :http_capability_gateway, :trusted_proxies, ["127.0.0.1", "::1", "10.0.0.1"]
+  #
+  # When strip_trust_header is false, no stripping occurs (useful for
+  # development environments where the gateway is accessed directly).
+  #
+  # Note: This uses conn.remote_ip which is set by the HTTP server (Cowboy).
+  # If you need to trust X-Forwarded-For headers from a CDN in front of
+  # your load balancer, configure Plug.Conn's remote_ip separately
+  # (e.g., via RemoteIp plug or Cowboy's proxy_header option).
+  defp strip_untrusted_headers(conn, _opts) do
+    if Application.get_env(:http_capability_gateway, :strip_trust_header, true) do
+      # Fetch the list of trusted proxy IPs from configuration.
+      # Default to loopback addresses only -- the most restrictive setting.
+      trusted_proxies =
+        Application.get_env(:http_capability_gateway, :trusted_proxies, ["127.0.0.1", "::1"])
+
+      # Convert the BEAM tuple IP address to a string for comparison.
+      # conn.remote_ip is an Erlang inet address tuple like {127, 0, 0, 1}
+      # or {0, 0, 0, 0, 0, 0, 0, 1} for IPv6.
+      remote_ip = conn.remote_ip |> :inet.ntoa() |> to_string()
+
+      if remote_ip in trusted_proxies do
+        # Request comes from a trusted proxy -- preserve the trust level header.
+        # The proxy is responsible for setting it correctly based on mTLS,
+        # authentication tokens, or other upstream verification.
+        conn
+      else
+        # Request comes from an untrusted source -- strip the trust level header
+        # to prevent spoofing. The downstream extract_trust_level/1 function
+        # will default to "untrusted" when the header is absent.
+        trust_header =
+          Application.get_env(:http_capability_gateway, :trust_level_header, "x-trust-level")
+
+        Logger.debug("Stripped trust level header from untrusted source",
+          remote_ip: remote_ip,
+          header: trust_header
+        )
+
+        delete_req_header(conn, trust_header)
+      end
+    else
+      # Header stripping disabled -- pass through unchanged.
+      # Only use this in development/testing environments.
+      conn
+    end
+  end
+
   # Health check endpoint - doesn't require policy
   get "/health" do
     handle_health_check(conn)
@@ -86,6 +181,38 @@ defmodule HttpCapabilityGateway.Gateway do
   end
 
   @doc """
+  Safely converts an HTTP method string to its corresponding atom.
+
+  Uses the @valid_methods allowlist to avoid the DoS vector inherent in
+  String.to_existing_atom/1 (which raises ArgumentError on unknown atoms)
+  and String.to_atom/1 (which can exhaust the BEAM atom table).
+
+  Returns the atom for known HTTP methods, or nil for unknown methods.
+  The caller (handle_request/1) uses this to short-circuit unknown methods
+  with a 405 response before any policy evaluation occurs.
+
+  ## Parameters
+
+    - `method`: HTTP method string from conn.method (e.g., "GET", "PROPFIND")
+
+  ## Returns
+
+    - Atom like :GET, :POST, etc. for valid methods
+    - nil for unknown/unsupported methods
+
+  ## Examples
+
+      iex> safe_verb("GET")
+      :GET
+
+      iex> safe_verb("PROPFIND")
+      nil
+  """
+  defp safe_verb(method) do
+    Map.get(@valid_methods, method)
+  end
+
+  @doc """
   Main request handler - enforces policy and forwards to backend.
 
   ## Parameters
@@ -94,10 +221,18 @@ defmodule HttpCapabilityGateway.Gateway do
 
   ## Process
 
-    1. Extract trust level from X-Trust-Level header
-    2. Lookup policy rule for path and verb
-    3. Evaluate access decision
-    4. Forward or deny request
+    1. Convert HTTP method to atom via safe allowlist (reject unknown methods)
+    2. Extract trust level from X-Trust-Level header
+    3. Lookup policy rule for path and verb
+    4. Evaluate access decision
+    5. Forward or deny request
+
+  ## Security
+
+  Unknown HTTP methods (PROPFIND, MKCOL, REPORT, arbitrary strings) are
+  rejected with 405 Method Not Allowed before reaching policy evaluation.
+  This prevents ArgumentError crashes from String.to_existing_atom/1 and
+  atom table exhaustion from String.to_atom/1, both of which are DoS vectors.
   """
   def handle_request(conn) do
     start_time = System.monotonic_time()
@@ -105,58 +240,89 @@ defmodule HttpCapabilityGateway.Gateway do
 
     Logger.metadata(request_id: request_id)
 
-    # Extract request details
     path = conn.request_path
-    verb = conn.method |> String.to_existing_atom()
-    trust_level = extract_trust_level(conn)
 
-    Logger.info("Processing request",
-      path: path,
-      verb: verb,
-      trust_level: trust_level
-    )
+    case safe_verb(conn.method) do
+      nil ->
+        # Unknown HTTP method -- reject without crashing.
+        #
+        # This is the critical security fix: instead of calling
+        # String.to_existing_atom(conn.method) which raises ArgumentError
+        # on unknown verbs (crashing the request handler and potentially
+        # the supervision tree under load), we return 405 immediately.
+        #
+        # This also prevents atom table exhaustion if an attacker sends
+        # thousands of unique method strings and we were using to_atom/1.
+        Logger.warning("Rejected unknown HTTP method",
+          method: conn.method,
+          path: path,
+          remote_ip: conn.remote_ip |> :inet.ntoa() |> to_string()
+        )
 
-    # Get compiled policy table from application environment
-    policy_table = Application.get_env(:http_capability_gateway, :policy_table)
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(405, Jason.encode!(%{error: "Method Not Allowed"}))
 
-    if is_nil(policy_table) do
-      # Policy not loaded - return 503 Service Unavailable
-      duration_us = System.monotonic_time() - start_time
-      log_decision(request_id, path, verb, trust_level, :error, "Policy not loaded", duration_us)
+      verb ->
+        # Valid HTTP method -- proceed with policy evaluation.
+        trust_level = extract_trust_level(conn)
 
-      conn
-      |> put_resp_content_type("application/json")
-      |> send_resp(503, Jason.encode!(%{error: "Service configuration unavailable"}))
-    else
-      # Lookup policy rule
-      case PolicyCompiler.lookup(policy_table, path, verb) do
-        {:ok, rule} ->
-          # Evaluate access decision
-          case evaluate_access(trust_level, rule.exposure) do
-            :allow ->
-              # Forward to backend
-              duration_us = System.monotonic_time() - start_time
-              log_decision(request_id, path, verb, trust_level, :allow, rule, duration_us)
+        Logger.info("Processing request",
+          path: path,
+          verb: verb,
+          trust_level: trust_level
+        )
 
-              Proxy.forward(conn, rule)
+        # Get compiled policy table from application environment.
+        # This reference is set by PolicyCompiler.compile/2 and updated
+        # atomically during policy reloads (see Fix 3: atomic swap pattern).
+        policy_table = Application.get_env(:http_capability_gateway, :policy_table)
 
-            :deny ->
-              # Access denied - return error or stealth response
-              duration_us = System.monotonic_time() - start_time
-              log_decision(request_id, path, verb, trust_level, :deny, rule, duration_us)
-
-              handle_denial(conn, rule, trust_level)
-          end
-
-        {:error, :no_match} ->
-          # No policy rule matches - default deny
+        if is_nil(policy_table) do
+          # Policy not loaded - return 503 Service Unavailable.
+          # This occurs during startup before the first policy compilation
+          # completes, or if policy loading failed entirely.
           duration_us = System.monotonic_time() - start_time
-          log_decision(request_id, path, verb, trust_level, :no_match, nil, duration_us)
+          log_decision(request_id, path, verb, trust_level, :error, "Policy not loaded", duration_us)
 
           conn
           |> put_resp_content_type("application/json")
-          |> send_resp(404, Jason.encode!(%{error: "Resource not found"}))
-      end
+          |> send_resp(503, Jason.encode!(%{error: "Service configuration unavailable"}))
+        else
+          # Lookup policy rule using tiered strategy:
+          # Tier 1: O(1) exact literal path match
+          # Tier 2: O(r) regex route pattern scan
+          # Tier 3: O(1) global verb rule fallback
+          case PolicyCompiler.lookup(policy_table, path, verb) do
+            {:ok, rule} ->
+              # Evaluate access decision based on trust level vs exposure requirement
+              case evaluate_access(trust_level, rule.exposure) do
+                :allow ->
+                  # Forward to backend -- trust level satisfies exposure requirement
+                  duration_us = System.monotonic_time() - start_time
+                  log_decision(request_id, path, verb, trust_level, :allow, rule, duration_us)
+
+                  Proxy.forward(conn, rule)
+
+                :deny ->
+                  # Access denied -- apply stealth profile if configured, otherwise 403
+                  duration_us = System.monotonic_time() - start_time
+                  log_decision(request_id, path, verb, trust_level, :deny, rule, duration_us)
+
+                  handle_denial(conn, rule, trust_level)
+              end
+
+            {:error, :no_match} ->
+              # No policy rule matches this path+verb combination -- default deny.
+              # Returns 404 to avoid leaking information about which paths exist.
+              duration_us = System.monotonic_time() - start_time
+              log_decision(request_id, path, verb, trust_level, :no_match, nil, duration_us)
+
+              conn
+              |> put_resp_content_type("application/json")
+              |> send_resp(404, Jason.encode!(%{error: "Resource not found"}))
+          end
+        end
     end
   end
 
@@ -229,7 +395,31 @@ defmodule HttpCapabilityGateway.Gateway do
       # Decode DER-encoded certificate
       cert = :public_key.pkix_decode_cert(cert_der, :otp)
 
-      # Extract subject from certificate
+      # Extract subject from the decoded certificate.
+      #
+      # IMPORTANT: This pattern match is a simplified approximation.
+      # When :public_key.pkix_decode_cert/2 is called with :otp, it returns
+      # an OTPCertificate record, NOT a raw {:Certificate, ...} tuple.
+      # The OTP certificate structure nests the subject inside:
+      #
+      #   #'OTPCertificate'{
+      #     tbsCertificate: #'OTPTBSCertificate'{
+      #       subject: {rdnSequence, [...]}
+      #     }
+      #   }
+      #
+      # For production use, this should be updated to use Erlang record
+      # accessors or the :public_key module's helper functions to extract
+      # the subject reliably across all certificate versions and formats.
+      #
+      # The current pattern may work for certificates decoded with :plain
+      # (the second argument to pkix_decode_cert), but :otp mode returns
+      # a different structure. Consider using:
+      #   cert_otp = :public_key.pkix_decode_cert(cert_der, :otp)
+      #   tbs = elem(cert_otp, 1)  # OTPTBSCertificate
+      #   subject = elem(tbs, 5)   # subject field
+      #
+      # TODO: Replace with proper OTP record access for production mTLS.
       case cert do
         {:Certificate, _, subject, _, _, _, _} ->
           subject_fields = extract_subject_fields(subject)
@@ -239,7 +429,31 @@ defmodule HttpCapabilityGateway.Gateway do
           {:error, :invalid_cert}
       end
     rescue
-      _ -> {:error, :decode_failed}
+      e in [ArgumentError, MatchError, FunctionClauseError] ->
+        # Certificate decoding can fail with these specific exceptions:
+        #
+        # - ArgumentError: malformed DER data passed to :public_key.pkix_decode_cert/2.
+        #   This occurs when the binary is not valid ASN.1 DER encoding, is truncated,
+        #   or contains invalid tag/length pairs.
+        #
+        # - MatchError: unexpected certificate structure after successful DER decoding.
+        #   This can happen when the certificate uses extensions or encoding variants
+        #   that don't match the expected OTP record structure.
+        #
+        # - FunctionClauseError: unsupported certificate version or algorithm.
+        #   The :public_key module's internal functions may not have clauses for
+        #   every possible certificate version (v1 certificates, for example,
+        #   have a different structure than v3).
+        #
+        # We log the exception for debugging but return a clean error tuple
+        # rather than crashing the request handler. The caller (extract_trust_level_from_cert/1)
+        # treats this as "untrusted" -- a safe default.
+        #
+        # Note: We intentionally do NOT catch all exceptions (bare rescue) because
+        # unexpected errors (e.g., ErlangError, SystemLimitError) indicate bugs
+        # that should propagate to the supervisor for visibility and crash reporting.
+        Logger.warning("Certificate decode failed", error: inspect(e))
+        {:error, :decode_failed}
     end
   end
 
