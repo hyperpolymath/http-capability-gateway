@@ -11,19 +11,20 @@ defmodule HttpCapabilityGateway.Application do
 
       HttpCapabilityGateway.Supervisor (one_for_one)
       ├── TelemetryMetricsPrometheus.Core  -- Prometheus metrics exporter
+      ├── HttpCapabilityGateway.CircuitBreaker -- Backend circuit breaker FSM
       ├── HttpCapabilityGateway.Minikaran  -- Traffic shape anomaly detector
       └── Plug.Cowboy (Gateway)            -- HTTP server
 
-  Minikaran is started BEFORE the HTTP server so that telemetry handlers
-  are attached before the first request arrives. This guarantees no
-  observations are lost during startup.
+  CircuitBreaker and Minikaran are started BEFORE the HTTP server so that
+  ETS tables and telemetry handlers are ready before the first request
+  arrives. This guarantees no observations are lost during startup.
   """
 
   use Application
   require Logger
 
   alias HttpCapabilityGateway.{PolicyLoader, PolicyValidator, PolicyCompiler, Logging}
-  alias HttpCapabilityGateway.Minikaran
+  alias HttpCapabilityGateway.{CircuitBreaker, Minikaran}
 
   @impl true
   def start(_type, _args) do
@@ -39,6 +40,12 @@ defmodule HttpCapabilityGateway.Application do
         children = [
           # Prometheus metrics exporter
           {TelemetryMetricsPrometheus.Core, metrics: telemetry_metrics()},
+
+          # Circuit breaker FSM -- started BEFORE Minikaran and the HTTP
+          # server so its ETS table (:gateway_circuit_breaker) exists before
+          # the first request arrives. The gateway calls allow?/1 on every
+          # request, so the table must be available from startup.
+          {CircuitBreaker, []},
 
           # Minikaran traffic anomaly detector -- started BEFORE the HTTP
           # server so its telemetry handlers are attached before the first

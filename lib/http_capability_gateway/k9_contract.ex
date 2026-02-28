@@ -77,7 +77,7 @@ defmodule HttpCapabilityGateway.K9Contract do
 
   require Logger
 
-  alias HttpCapabilityGateway.SafeTrust
+  alias HttpCapabilityGateway.{CircuitBreaker, SafeTrust}
 
   # ---------------------------------------------------------------------------
   # Type Definitions
@@ -513,10 +513,14 @@ defmodule HttpCapabilityGateway.K9Contract do
         :ok
 
       :circuit_break ->
-        # Increment the breach counter for this route. If the counter exceeds
-        # a threshold (configurable, default 5), the route is marked as degraded
-        # and future requests receive 503 Service Unavailable until the circuit
-        # resets (either manually or via a half-open probe).
+        # Trip the circuit breaker for this route's service. The CircuitBreaker
+        # GenServer manages the FSM transitions (open -> half_open -> closed)
+        # and schedules recovery probes. Once tripped, the gateway's allow?/1
+        # check will reject requests to this backend until the circuit recovers.
+        #
+        # We also increment the breach counter for audit trail purposes and
+        # backward compatibility with dashboards reading breach counts from ETS.
+        CircuitBreaker.trip(contract.service)
         increment_breach_counter(contract)
         :ok
 

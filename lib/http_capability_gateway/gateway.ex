@@ -37,6 +37,7 @@ defmodule HttpCapabilityGateway.Gateway do
   use Plug.Router
   require Logger
 
+  alias HttpCapabilityGateway.CircuitBreaker
   alias HttpCapabilityGateway.K9Contract
   alias HttpCapabilityGateway.Minikaran
   alias HttpCapabilityGateway.PolicyCompiler
@@ -213,34 +214,22 @@ defmodule HttpCapabilityGateway.Gateway do
     handle_request(conn)
   end
 
-  @doc """
-  Safely converts an HTTP method string to its corresponding atom.
-
-  Uses the @valid_methods allowlist to avoid the DoS vector inherent in
-  String.to_existing_atom/1 (which raises ArgumentError on unknown atoms)
-  and String.to_atom/1 (which can exhaust the BEAM atom table).
-
-  Returns the atom for known HTTP methods, or nil for unknown methods.
-  The caller (handle_request/1) uses this to short-circuit unknown methods
-  with a 405 response before any policy evaluation occurs.
-
-  ## Parameters
-
-    - `method`: HTTP method string from conn.method (e.g., "GET", "PROPFIND")
-
-  ## Returns
-
-    - Atom like :GET, :POST, etc. for valid methods
-    - nil for unknown/unsupported methods
-
-  ## Examples
-
-      iex> safe_verb("GET")
-      :GET
-
-      iex> safe_verb("PROPFIND")
-      nil
-  """
+  # Safely converts an HTTP method string to its corresponding atom.
+  #
+  # Uses the @valid_methods allowlist to avoid the DoS vector inherent in
+  # String.to_existing_atom/1 (which raises ArgumentError on unknown atoms)
+  # and String.to_atom/1 (which can exhaust the BEAM atom table).
+  #
+  # Returns the atom for known HTTP methods, or nil for unknown methods.
+  # The caller (handle_request/1) uses this to short-circuit unknown methods
+  # with a 405 response before any policy evaluation occurs.
+  #
+  # Parameters:
+  #   - method: HTTP method string from conn.method (e.g., "GET", "PROPFIND")
+  #
+  # Returns:
+  #   - Atom like :GET, :POST, etc. for valid methods
+  #   - nil for unknown/unsupported methods
   defp safe_verb(method) do
     Map.get(@valid_methods, method)
   end
@@ -387,6 +376,40 @@ defmodule HttpCapabilityGateway.Gateway do
   #   4. Post-proxy: measure response latency against contract max_latency_ms
   #   5. If breached: execute breach policy (log, alert, circuit_break, fallback)
   defp enforce_with_contract(conn, rule, path, verb, trust_level) do
+    # Circuit breaker check: reject requests to backends with open circuits
+    # BEFORE doing any contract lookup or proxying. This prevents wasting
+    # resources on requests that will fail anyway. The backend identifier
+    # is the service name from the K9 contract, or "default" for uncontracted routes.
+    backend_name =
+      case K9Contract.lookup(path, verb) do
+        nil -> "default"
+        %K9Contract{service: service} -> service
+      end
+
+    if CircuitBreaker.allow?(backend_name) do
+      enforce_with_contract_inner(conn, rule, path, verb, trust_level)
+    else
+      # Circuit is open — reject immediately with 503 to prevent hammering
+      # the degraded backend. The circuit breaker will automatically probe
+      # for recovery via the half-open state after a configured timeout.
+      Logger.warning("Request rejected by circuit breaker",
+        backend: backend_name,
+        path: path,
+        verb: verb
+      )
+
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(503, Jason.encode!(%{
+        error: "Service Unavailable",
+        message: "Circuit breaker open for backend '#{backend_name}'"
+      }))
+    end
+  end
+
+  # Inner contract enforcement, called after the circuit breaker check passes.
+  # Separated to keep the circuit breaker guard clean and avoid deep nesting.
+  defp enforce_with_contract_inner(conn, rule, path, verb, trust_level) do
     case K9Contract.lookup(path, verb) do
       nil ->
         # No K9 contract for this route — forward directly (existing behaviour).

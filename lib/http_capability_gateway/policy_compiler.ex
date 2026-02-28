@@ -373,11 +373,6 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
     end
   end
 
-  # Get stealth status code from DSL v1 policy
-  defp get_stealth_status_code(policy) do
-    get_in(policy, ["stealth", "status_code"]) || 404
-  end
-
   @doc """
   Returns statistics about compiled policy tables.
 
