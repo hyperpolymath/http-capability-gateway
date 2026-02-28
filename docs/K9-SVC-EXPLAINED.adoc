@@ -1,0 +1,329 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath)
+= K9-SVC: What It Actually Is, Through the Eyes of Someone Deploying It
+:toc: left
+:toclevels: 3
+:icons: font
+:sectnums:
+
+== Preface
+
+This is not a spec. This is the story of what happens when you actually try to
+use K9-SVC contracts in a real system. It covers the wins, the false starts, the
+"wait, that was stupid" moments, and the "oh, this actually does make life easier"
+realisations. Read this if you want to understand _why_ K9 exists and _where it
+stops being useful_.
+
+For the formal specification, see `standards/k9-svc/SPEC.adoc`. +
+For the comparison tables, see `standards/k9-svc/examples/NOT-a-good-fit.adoc`.
+
+== The Setup
+
+You are running three services:
+
+* **http-capability-gateway** — an Elixir HTTP gateway that routes requests
+  to backends based on policy rules and trust levels
+* **hybrid-automation-router** — an Elixir infrastructure router that takes
+  IaC configs (Ansible, Terraform, Salt) and dispatches operations to the right
+  backend
+* A handful of downstream backends that actually do the work
+
+You have a2ml attestations for audit trails, a circuit breaker for backend
+health, rate limiting per trust level, and a formal trust hierarchy verified
+in Idris2. Life is good.
+
+Then a backend starts intermittently returning garbage responses in 900ms instead
+of the usual 50ms. Your circuit breaker does not trip because the backend is not
+_failing_ — it is responding. Your rate limiter does not care because the request
+count is normal. Your trust hierarchy says the caller is authorised. Everything
+looks green. But your users are furious.
+
+This is the gap K9-SVC fills.
+
+== Chapter 1: "I'll Just Add a Timeout"
+
+Your first instinct is to add a timeout to the proxy call. If the backend takes
+longer than 200ms, return a 504.
+
+This works. For about a week. Then:
+
+* Someone asks: "Why is it 200ms and not 300ms?"
+* Someone else asks: "Can the /admin endpoint have a longer timeout?"
+* A third person asks: "What happens when we breach the timeout — do we retry,
+  circuit-break, or just log it?"
+
+You now have three ad-hoc `case` statements, a `:timeout_ms` field in the policy
+config that nobody remembers to set, and a comment that says
+`# TODO: proper SLA enforcement`. You have reinvented half of K9 badly.
+
+=== What K9 Gives You Here
+
+A K9 contract makes the ad-hoc explicit:
+
+[source,elixir]
+----
+%K9Contract{
+  service: "user-api",
+  route_pattern: "/api/v1/users/*",
+  trust_threshold: :authenticated,
+  max_latency_ms: 200,
+  rate_limit: 100,
+  timeout_ms: 250,
+  breach_policy: :circuit_break,
+  guarantees: %{
+    availability: 0.999,
+    error_rate: 0.01
+  }
+}
+----
+
+This is not magic. It is the same information you were going to scatter across
+config files, case statements, and TODO comments — but collected in one place
+with a deterministic ID (SHA-256 of the content) and an explicit breach policy.
+
+The gateway can now:
+
+1. Look up the contract before proxying
+2. Check the trust threshold (via SafeTrust — already verified in Idris2)
+3. Time the response
+4. If `actual_ms > max_latency_ms`, execute the breach policy
+
+The contract is the _name for the thing you were going to do anyway_.
+
+== Chapter 2: "Wait, Do I Need This for Every Endpoint?"
+
+You get excited and start writing K9 contracts for everything. The health check
+endpoint. The metrics endpoint. The favicon. Then you stop.
+
+The health check returns in 2ms, always. There is no SLA to enforce. Writing a
+K9 contract for it adds a struct, an ETS lookup, and a timing measurement to
+a request that was already faster than the overhead of checking the contract.
+
+**This is where K9 is pointless.** Endpoints with trivial, predictable latency
+and no SLA obligations do not need contracts. Adding one creates maintenance
+work (you have to update the contract when you change the endpoint) with no
+operational benefit.
+
+=== The Rule
+
+* If the endpoint has an SLA obligation to external consumers → K9 contract.
+* If the endpoint has variable latency or depends on a downstream service → K9 contract.
+* If the endpoint is internal plumbing with predictable sub-millisecond latency → skip it.
+
+== Chapter 3: "The Breach Policy is the Hard Part"
+
+You have contracts on your important endpoints. The latency check works. Then
+the `user-api` breaches its 200ms SLA for the third time in a minute. Your
+breach policy says `:circuit_break`. The circuit breaker opens. All requests
+to `user-api` now return 503.
+
+Your users go from "slow responses" to "no responses." You have made things worse.
+
+**This is a real failure mode.** A breach policy that is too aggressive converts
+a degraded service into an unavailable one. The circuit breaker is a blunt
+instrument — it does not know that "slow but working" is better than "completely
+off."
+
+=== What You Learn
+
+The breach policy needs gradation:
+
+[horizontal]
+`:log`:: Record the breach. Do nothing else. Good for new contracts where you
+are learning the baseline.
+`:alert`:: Emit a telemetry event. Dashboards light up. Humans decide.
+`:degrade`:: Deprioritise the backend in routing decisions for 60 seconds.
+Requests still go through, but the router prefers alternatives if available.
+`:circuit_break`:: Nuclear option. Open the circuit. Use only when the backend
+is returning _wrong_ data, not just _slow_ data.
+
+You update your contract:
+
+[source,elixir]
+----
+breach_policy: :degrade  # was :circuit_break
+----
+
+Now when the backend is slow, it gets deprioritised rather than cut off. Requests
+still succeed; they just prefer faster alternatives when available. The telemetry
+shows the degradation, and a human can decide whether to escalate.
+
+== Chapter 4: "Can I Use This in the Git Forge?"
+
+You try to bring K9 contracts into your GitHub Actions CI pipeline. The idea:
+each workflow step has a contract declaring its maximum expected duration and
+breach policy.
+
+You write a contract for the `rspec` test step:
+
+[source,yaml]
+----
+# This is WRONG
+k9_contract:
+  step: "run-tests"
+  max_latency_ms: 120000
+  breach_policy: "alert"
+----
+
+Then you realise:
+
+1. GitHub Actions YAML has no way to execute breach policies. There is no
+   callback, no hook, no side-channel. The workflow either succeeds or fails.
+2. The timing measurement would require wrapping the step in a shell script
+   that checks `$SECONDS` after execution. This is a shell hack, not a
+   contract enforcement.
+3. If the tests take 121 seconds instead of 120, what are you going to do?
+   Fail the build? You were going to do that anyway if the tests failed.
+   The timeout adds nothing that `timeout-minutes:` in the YAML does not
+   already provide.
+
+**K9 contracts do not belong in CI/CD step-level enforcement.** The CI platform
+already has timeout and retry mechanisms. Wrapping them in K9 adds indirection
+without capability. K9 is for _runtime service governance_, not _build pipeline
+orchestration_.
+
+=== Where K9 _Does_ Help in CI/CD
+
+K9 contracts are useful for the _validation layer_ around deployment configs.
+A Nickel-typed `.k9.ncl` file that validates your Helm values before `helm install`
+catches type errors at eval time instead of runtime. But this is the K9 _file
+format_ (the .k9 SVC standard), not the K9 _contract enforcement_ layer.
+
+The distinction matters:
+
+[cols="1,2,2"]
+|===
+| Layer | What it does | Where it works
+
+| K9-SVC file format (.k9)
+| Self-validating components with typed contracts, security levels, pedigree
+| CI/CD validation, config management, deployment orchestration
+
+| K9 contract enforcement
+| Runtime SLA measurement with breach policies
+| HTTP gateways, service routers, backend proxies — anywhere you _time a response_
+|===
+
+== Chapter 5: "Okay, What About the Automation Router?"
+
+You apply K9 contracts to the hybrid-automation-router. Here the contract is
+different — it is not about HTTP response latency. It is about _routing decision
+time_:
+
+[source,elixir]
+----
+%K9Contract{
+  service: "terraform-backend",
+  pattern: "terraform-*",
+  max_decision_time_ms: 50,
+  max_execution_time_ms: 30000,
+  consistency_guarantee: :strict,
+  breach_policy: :degrade
+}
+----
+
+The router wraps its entire pipeline (pattern match → circuit breaker → health
+filter → policy filter → select) in `K9Contract.timed_enforce/3`. If the
+routing _decision_ (not the backend execution) takes longer than 50ms, the
+contract breaches.
+
+This catches a real class of bugs: a regex-heavy policy filter that goes
+quadratic on certain input patterns, a health checker that blocks on a dead
+backend's TCP timeout, or a cycle detector that hits pathological graph
+structures.
+
+**This is where K9 shines in the automation router.** The routing decision
+_should_ be fast (sub-50ms). If it is not, something is wrong in the pipeline.
+The contract surfaces this before it cascades into visible latency.
+
+== Chapter 6: The Terminology
+
+[cols="1,3"]
+|===
+| Term | Plain English
+
+| **contract_id**
+| SHA-256 hash of the contract content. Same obligations always produce the
+same ID. You can compare two contracts by comparing their hashes — if the IDs
+match, the contracts are identical. Content-addressable, deterministic,
+tamper-evident.
+
+| **trust_threshold**
+| Minimum trust level to activate this contract. An `:untrusted` caller might
+get a looser contract (500ms SLA) while an `:authenticated` caller gets a strict
+one (200ms). Reads from SafeTrust — the formally verified trust hierarchy.
+
+| **max_latency_ms**
+| The SLA ceiling. If a response takes longer than this, the contract is breached.
+Not a timeout (the request still completes) — a measurement that triggers the
+breach policy.
+
+| **breach_policy**
+| What to do when the SLA is violated. One of: `:log` (soft), `:alert` (telemetry),
+`:degrade` (deprioritise backend), `:circuit_break` (open the circuit breaker).
+
+| **overshoot**
+| How far past the SLA the response went. `overshoot_ms = actual_ms - max_latency_ms`.
+Logged for trend analysis. An overshoot of 5ms on a 200ms SLA is noise; an
+overshoot of 2000ms means something is very wrong.
+
+| **degradation marker**
+| In the automation router: when a breach triggers `:degrade`, the backend gets a
+time-limited marker in ETS (60 seconds) that causes the router to prefer
+alternatives. Not removed — just expires. Non-destructive.
+
+| **timed_enforce**
+| The wrapper function. Takes a zero-arity function, measures wall-clock time,
+compares against the contract threshold, fires the breach policy if exceeded.
+This is the integration point — wrap any operation in it.
+
+| **K9-SVC file format**
+| The `.k9` self-validating component standard (must-just-nickel triad). Related
+to but distinct from K9 contract enforcement. The file format is for deployment
+components; the contract layer is for runtime SLA governance.
+|===
+
+== Chapter 7: What K9 Is Not
+
+K9-SVC contracts are not:
+
+* **A replacement for monitoring.** Monitoring shows you trends over time. K9
+  acts on individual requests. You need both.
+* **A replacement for circuit breakers.** K9 can _trigger_ a circuit breaker
+  via the `:circuit_break` breach policy, but the FSM (closed → open → half-open)
+  is a separate component. K9 is the _policy_; the circuit breaker is the
+  _mechanism_.
+* **A general-purpose SLO system.** K9 contracts enforce per-request SLAs.
+  Aggregate SLO tracking (99.9% availability over a 30-day window) requires a
+  monitoring system like Prometheus + Grafana.
+* **A service mesh replacement.** Istio/Linkerd handle infrastructure-level
+  concerns (mTLS, retry budgets, load balancing). K9 handles application-level
+  concerns (per-route SLA, trust-aware breach policies).
+* **Useful for everything.** Health checks, favicon routes, internal plumbing,
+  CI/CD steps, config files, and documentation do not need K9 contracts. Adding
+  them creates overhead with no benefit.
+
+== Summary
+
+K9-SVC contracts fill the gap between "this backend is _up_" and "this backend
+is _performing to spec_." They make implicit SLA expectations explicit, attach
+enforcement policies to those expectations, and integrate with the trust hierarchy
+and circuit breaker to create graduated responses to degradation.
+
+They are most useful when:
+
+* Backends have variable latency and external SLA obligations
+* Different trust levels should get different service guarantees
+* You need automatic graduated response to performance degradation (not just
+  binary up/down)
+* Routing decisions themselves need performance contracts (automation router)
+
+They are least useful when:
+
+* Latency is trivial and predictable (health checks, static responses)
+* The platform already provides enforcement (CI/CD timeouts, mesh policies)
+* The "contract" would be identical for every request (just set a global timeout)
+
+For the formal spec: `standards/k9-svc/SPEC.adoc` +
+For the anti-patterns: `standards/k9-svc/examples/NOT-a-good-fit.adoc` +
+For the a2ml audit trail that pairs with K9: `docs/A2ML-EXPLAINED.adoc`

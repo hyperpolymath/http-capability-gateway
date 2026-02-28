@@ -1,0 +1,363 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath)
+= A2ML Attestations: What They Are and Where They Help
+:toc: left
+:toclevels: 3
+:icons: font
+:sectnums:
+
+== Preface
+
+A2ML (Attested Markup Language) has two faces. One is a document format — a
+Djot-like markup with typed guarantees. The other, and the one that matters
+here, is the _attestation envelope_: a content-addressable audit record that
+proves a decision was made, what the inputs were, and that nobody tampered
+with the record afterwards.
+
+This document tells the story of actually using a2ml attestations in a
+production gateway and automation router. Where they help, where they are
+overkill, and what the terminology means.
+
+For the a2ml format spec: `standards/a2ml/SPEC.adoc` +
+For K9-SVC contracts (which pair with a2ml): `docs/K9-SVC-EXPLAINED.adoc`
+
+== The Problem: "Who Decided That?"
+
+You are debugging a production incident. A request to `/api/v1/users/42` was
+denied with 403. The caller says they should have been allowed. You check the
+logs:
+
+----
+[2026-02-28 14:23:07] DENY trust=untrusted exposure=authenticated path=/api/v1/users/42
+----
+
+Okay, so the caller was untrusted and the endpoint requires authentication.
+But the caller says they sent a valid API key. You check the headers... and
+discover the log does not record headers. You have the _verdict_ but not the
+_evidence_.
+
+Now multiply this by a hundred decisions per second across three services. When
+something goes wrong, you need to answer:
+
+1. What was the exact input?
+2. What policy was applied?
+3. What was the decision?
+4. Can I prove the log entry has not been modified?
+
+Without attestations, you are reconstructing history from incomplete, unsigned
+log lines.
+
+== Chapter 1: "I'll Just Log More"
+
+Your first attempt is to add more fields to the log:
+
+[source,elixir]
+----
+Logger.info("access_decision",
+  trust: trust_level,
+  exposure: exposure_level,
+  path: conn.request_path,
+  method: conn.method,
+  client_ip: client_ip,
+  headers: sanitised_headers,
+  decision: "deny",
+  policy_version: current_policy_hash
+)
+----
+
+This is better. You can now see the full context. But:
+
+* **Logs are mutable.** Someone with access to the log aggregator can edit or
+  delete entries. You have no proof that the log at 14:23:07 is the same log
+  that was written at 14:23:07.
+* **Logs are not content-addressable.** If you have two log lines with the same
+  timestamp, you cannot determine which is authentic.
+* **Log fields drift.** When you change the log format, historical entries
+  become inconsistent with current entries. There is no schema enforcement
+  across log lines.
+
+=== What a2ml Attestations Add
+
+An a2ml attestation wraps the decision in a content-addressable envelope:
+
+[source,elixir]
+----
+%{
+  version: "1.0",
+  type: :access,
+  issuer: "http-capability-gateway",
+  issued_at: "2026-02-28T14:23:07.123Z",
+  decision_hash: "a3f8b2c4d5e6...",  # SHA-256 of the decision payload
+  decision: %{
+    trust: :untrusted,
+    exposure: :authenticated,
+    path: "/api/v1/users/42",
+    method: "GET",
+    verdict: :deny,
+    policy_hash: "7b9e1f2a3c..."
+  }
+}
+----
+
+The `decision_hash` is the SHA-256 of the `decision` map, canonically serialised.
+If anyone modifies any field of the decision, the hash no longer matches. You can
+verify an attestation at any time by recomputing the hash and comparing.
+
+This is not blockchain. There are no blocks, no consensus, no distributed
+ledger. It is a hash. Simple, fast, tamper-evident.
+
+== Chapter 2: "Do I Need This for Every Request?"
+
+You instrument the gateway to produce an attestation for every access decision.
+At 1000 requests per second, you are now producing 1000 attestation records per
+second. Each one has a SHA-256 hash computation, a JSON serialisation, and
+a write to the audit store (Redis, in this case).
+
+After a day you check Redis: 86.4 million attestation records. Your Redis
+instance is using 12GB of memory for audit data.
+
+**This is where a2ml attestations become expensive.** Every-request attestation
+is appropriate for high-security systems (financial transactions, healthcare
+data access, regulatory compliance). For a general-purpose API gateway, it is
+overkill.
+
+=== What You Learn
+
+Attest _decisions that matter_, not every request:
+
+[horizontal]
+Always attest:: Access denials (every 403 needs a provable reason), trust level
+changes (escalation or de-escalation), policy reloads (the old and new policy
+hashes), circuit breaker state transitions.
+
+Optionally attest:: Access grants to sensitive endpoints (configurable per
+route), routing decisions in the automation router (content-addressable plan).
+
+Skip:: Health checks, metrics scrapes, static asset serving, internal
+keep-alive pings.
+
+The automation router is different — there, every routing decision IS the
+product. You want an attestation for every plan because the plan determines
+which backend runs which infrastructure operation. A wrong routing decision
+can destroy a production environment. The cost of one SHA-256 per routing
+decision is negligible compared to the cost of an unauditable deployment
+mistake.
+
+== Chapter 3: "The Sensitive Data Problem"
+
+Your attestation for a routing decision includes the full decision payload.
+That payload includes the parameters the user sent. Those parameters include:
+
+[source,json]
+----
+{
+  "backend": "terraform-apply",
+  "target": "production",
+  "params": {
+    "aws_access_key_id": "AKIA...",
+    "aws_secret_access_key": "wJalrXUtnFEMI..."
+  }
+}
+----
+
+You just wrote AWS credentials to your audit log. In a content-addressable
+record. With a hash that proves it is authentic.
+
+**This is a real security failure.** The attestation system, designed to improve
+security, has created a credential leak.
+
+=== What You Learn
+
+The attestation layer MUST redact sensitive parameters before hashing. The
+implementation maintains a list of sensitive key patterns:
+
+[source,elixir]
+----
+@sensitive_keys ~w(password token secret key credential api_key
+                   access_key private_key)
+----
+
+When building the attestation payload, any key matching these patterns gets its
+value replaced with `"[REDACTED]"`. The hash is computed over the _redacted_
+payload, so:
+
+1. The hash still proves the _structure_ of the decision (which backend, which
+   target, how many parameters).
+2. The hash does NOT prove the _values_ of sensitive parameters (because they
+   are redacted before hashing).
+3. No credentials appear in the audit log.
+
+This is a deliberate trade-off: you lose the ability to prove "the exact
+credential that was used" in exchange for not storing credentials in the audit
+system. For almost every use case, the structure proof is sufficient.
+
+== Chapter 4: "Can I Use This in Git Forges?"
+
+You want to attest commits. Every time someone pushes to your git forge, you
+generate an a2ml attestation recording the commit hash, the author, and the
+branch.
+
+This works — but it duplicates what git already provides. A git commit IS a
+content-addressable record. The commit hash IS a SHA (SHA-1 or SHA-256 with
+newer git). The commit metadata already contains the author, timestamp, and
+parent references.
+
+**A2ML attestations add nothing over git's built-in commit hashing for recording
+"who committed what."** Git is already a content-addressable audit trail for
+source code changes.
+
+=== Where a2ml DOES Help in Git Forges
+
+What git does NOT record:
+
+* **Policy decisions.** When a CI pipeline decides to auto-merge a Dependabot PR,
+  what policy was applied? Was the merge based on passing tests, review
+  approval, or a timeout? Git records that the merge happened but not _why_.
+* **Access control decisions.** When a push is rejected by branch protection, what
+  rule rejected it? Git returns "rejected" but the decision reasoning is
+  ephemeral.
+* **Cross-repo propagation.** When you mirror a commit from GitHub to GitLab to
+  Codeberg, how do you prove the mirrors are faithful? Git hashes prove content
+  integrity per-commit, but a2ml can attest the _propagation decision_ ("mirror
+  triggered at T, source hash X, destination hash Y, match: true").
+
+The forge integration point is the _automation around git_, not git itself.
+Attesting CI/CD decisions, merge policies, and cross-forge propagation gives
+you an audit trail for the stuff that happens _between_ commits.
+
+== Chapter 5: The Terminology
+
+[cols="1,3"]
+|===
+| Term | Plain English
+
+| **attestation**
+| A record that says "at time T, system S made decision D based on inputs I."
+The record carries a hash that proves it has not been modified.
+
+| **content-addressable**
+| The attestation's identity IS its content. The ID is the SHA-256 hash of the
+decision payload. Same inputs → same hash. Different inputs → different hash.
+No separate ID generator needed.
+
+| **decision_hash**
+| SHA-256 of the canonically serialised decision payload. This is the
+tamper-evidence mechanism. Recompute the hash from the stored decision; if it
+matches decision_hash, the record is authentic.
+
+| **policy_hash**
+| SHA-256 of the policy rules that were in effect when the decision was made.
+If you later discover the policy was wrong, you can find all decisions made
+under that policy by searching for its hash.
+
+| **envelope**
+| The wrapper around the decision: version, type, issuer, issued_at,
+decision_hash. The envelope metadata is NOT included in the decision_hash
+(the hash covers only the decision payload). This means you can add envelope
+metadata (like a verification timestamp) without invalidating the hash.
+
+| **attestation type**
+| What kind of decision was attested. Types: `:routing` (which backend handles
+this?), `:access` (allow or deny?), `:policy` (policy reload), `:trust`
+(trust level change). The type is in the envelope, not the hash.
+
+| **issuer**
+| Which system produced this attestation. In the gateway it is
+`"http-capability-gateway"`. In the router it is `"hybrid-automation-router"`.
+Used for provenance — you can trace an attestation back to its source.
+
+| **verify**
+| Recompute the hash from the stored decision payload and compare it to the
+stored decision_hash. If they match, the record has not been tampered with.
+If they do not match, either the decision was modified or the hash was
+corrupted.
+
+| **redaction**
+| Replacing sensitive values with `"[REDACTED]"` before computing the hash.
+The hash covers the redacted payload, so it proves structure but not sensitive
+values. This is a deliberate security trade-off.
+|===
+
+== Chapter 6: How a2ml and K9-SVC Work Together
+
+A2ML attestations and K9-SVC contracts are complementary layers:
+
+[cols="1,2,2"]
+|===
+| | a2ml Attestation | K9-SVC Contract
+
+| **Question answered**
+| "What happened and can I prove it?"
+| "Was it within spec and what do we do if not?"
+
+| **When it acts**
+| After a decision is made (records the outcome)
+| Before and after execution (enforces the SLA)
+
+| **What it produces**
+| A content-addressable audit record
+| A breach/success signal with enforcement action
+
+| **Failure mode**
+| If attestation fails, the request still succeeds (audit gap)
+| If contract breaches, the breach policy fires (degrade, alert, circuit-break)
+
+| **Storage**
+| Audit log (Redis, database, IPFS)
+| ETS table (in-memory, per-node)
+|===
+
+In practice, the flow is:
+
+----
+Request arrives
+  │
+  ├─ SafeTrust evaluates access → a2ml attests the decision
+  │
+  ├─ K9 contract pre-check (trust threshold, rate limit)
+  │
+  ├─ Proxy to backend (timed)
+  │
+  ├─ K9 contract post-check (latency SLA) → breach policy if exceeded
+  │
+  └─ a2ml attests the full outcome (including K9 breach if any)
+----
+
+The attestation records that K9 fired a breach policy. K9 does not know or
+care about attestations. They are independent systems that compose naturally.
+
+== Chapter 7: What a2ml Attestations Are Not
+
+* **Not a replacement for logs.** Logs are for humans debugging at 3am.
+  Attestations are for proving "the system made this decision" to an auditor,
+  regulator, or post-incident review. You need both.
+* **Not a blockchain.** There are no blocks, no proof-of-work, no consensus
+  protocol. It is a hash in a JSON envelope. Fast, simple, verifiable.
+* **Not encryption.** The attestation is plaintext. The hash proves integrity
+  (not modified), not confidentiality (not readable). If you need secrecy,
+  encrypt the audit store separately.
+* **Not useful for everything.** Health checks, metrics, and internal pings
+  do not need attestation. The cost of hashing is low but the storage and
+  query cost at high volume is real.
+
+== Summary
+
+A2ML attestations turn ephemeral log lines into content-addressable, tamper-evident
+audit records. They are most valuable for:
+
+* Access denials (provable "why was I blocked?")
+* Routing decisions in infrastructure automation (provable "why did this backend
+  get this operation?")
+* Policy changes (provable "what rules were in effect?")
+* Cross-service propagation decisions (provable "was the mirror faithful?")
+
+They are least valuable for:
+
+* Anything git already hashes (commits, trees, blobs)
+* High-volume, low-stakes requests (health checks, static assets)
+* Cases where the log already contains everything you need and tamper-evidence
+  is not required
+
+For the a2ml format spec: `standards/a2ml/SPEC.adoc` +
+For K9-SVC contracts: `docs/K9-SVC-EXPLAINED.adoc` +
+For anti-patterns and comparison tables: `standards/k9-svc/examples/NOT-a-good-fit.adoc`
