@@ -39,6 +39,8 @@ defmodule HttpCapabilityGateway.Gateway do
 
   alias HttpCapabilityGateway.PolicyCompiler
   alias HttpCapabilityGateway.Proxy
+  alias HttpCapabilityGateway.RateLimiter
+  alias HttpCapabilityGateway.SafeTrust
 
   # Safe HTTP verb conversion with allowlist.
   #
@@ -68,6 +70,8 @@ defmodule HttpCapabilityGateway.Gateway do
   plug(Plug.Logger)
   plug(:security_headers)
   plug(:strip_untrusted_headers)
+  plug(:extract_trust)
+  plug(RateLimiter)
   plug(:match)
   plug(:dispatch)
 
@@ -158,6 +162,22 @@ defmodule HttpCapabilityGateway.Gateway do
       # Only use this in development/testing environments.
       conn
     end
+  end
+
+  # Extract trust level from headers/mTLS and store in conn.assigns.
+  #
+  # This plug runs BEFORE the RateLimiter plug in the pipeline so that
+  # rate limiting decisions can be based on the authenticated trust level.
+  # The trust level is parsed through SafeTrust.parse_trust/1 which
+  # safely maps strings to atoms from a fixed set (no String.to_atom).
+  #
+  # The trust level is stored in conn.assigns[:trust_level] and reused
+  # by both the rate limiter and the request handler, avoiding duplicate
+  # extraction work.
+  defp extract_trust(conn, _opts) do
+    trust_level_str = extract_trust_level(conn)
+    trust_level = SafeTrust.parse_trust(trust_level_str)
+    Plug.Conn.assign(conn, :trust_level, trust_level)
   end
 
   # Health check endpoint - doesn't require policy
@@ -265,7 +285,12 @@ defmodule HttpCapabilityGateway.Gateway do
 
       verb ->
         # Valid HTTP method -- proceed with policy evaluation.
-        trust_level = extract_trust_level(conn)
+        #
+        # Trust level was already extracted and parsed by the :extract_trust
+        # plug earlier in the pipeline (stored in conn.assigns[:trust_level]).
+        # This avoids duplicate header parsing and ensures the rate limiter
+        # and request handler see the same trust level.
+        trust_level = Map.get(conn.assigns, :trust_level, :untrusted)
 
         Logger.info("Processing request",
           path: path,
@@ -291,20 +316,26 @@ defmodule HttpCapabilityGateway.Gateway do
         else
           # Lookup policy rule using tiered strategy:
           # Tier 1: O(1) exact literal path match
-          # Tier 2: O(r) regex route pattern scan
+          # Tier 2: O(r) regex route pattern scan (dedicated regex table)
           # Tier 3: O(1) global verb rule fallback
           case PolicyCompiler.lookup(policy_table, path, verb) do
             {:ok, rule} ->
-              # Evaluate access decision based on trust level vs exposure requirement
-              case evaluate_access(trust_level, rule.exposure) do
-                :allow ->
+              # Evaluate access decision using SafeTrust.evaluate/2.
+              # This replaces the ad-hoc evaluate_access/2 function with the
+              # formally verified trust hierarchy from proven/SafeTrust.idr.
+              # SafeTrust.evaluate/2 returns {:allow, t, e} or {:deny, t, e}
+              # providing a structured audit trail for every decision.
+              exposure = SafeTrust.parse_exposure(rule.exposure)
+
+              case SafeTrust.evaluate(trust_level, exposure) do
+                {:allow, _t, _e} ->
                   # Forward to backend -- trust level satisfies exposure requirement
                   duration_us = System.monotonic_time() - start_time
                   log_decision(request_id, path, verb, trust_level, :allow, rule, duration_us)
 
                   Proxy.forward(conn, rule)
 
-                :deny ->
+                {:deny, _t, _e} ->
                   # Access denied -- apply stealth profile if configured, otherwise 403
                   duration_us = System.monotonic_time() - start_time
                   log_decision(request_id, path, verb, trust_level, :deny, rule, duration_us)
@@ -506,43 +537,38 @@ defmodule HttpCapabilityGateway.Gateway do
     end
   end
 
-  # Evaluate if trust level satisfies exposure requirement
-  @spec evaluate_access(trust_level :: String.t(), exposure :: String.t()) :: :allow | :deny
-  defp evaluate_access(trust_level, exposure) do
-    case {trust_level, exposure} do
-      # Public endpoints - anyone can access
-      {_, "public"} -> :allow
+  # NOTE: The previous ad-hoc evaluate_access/2 function has been removed.
+  # All access decisions now go through SafeTrust.evaluate/2 which implements
+  # the formally verified trust hierarchy from proven/SafeTrust.idr.
+  # The access decision is: rank(trust) >= rank(exposure), where ranks are
+  # untrusted=0, authenticated=1, internal=2 for trust, and
+  # public=0, authenticated=1, internal=2 for exposure.
+  # See HttpCapabilityGateway.SafeTrust for the single source of truth.
 
-      # Authenticated endpoints - authenticated or internal only
-      {"authenticated", "authenticated"} -> :allow
-      {"internal", "authenticated"} -> :allow
-
-      # Internal endpoints - internal only
-      {"internal", "internal"} -> :allow
-
-      # All other combinations - deny
-      _ -> :deny
-    end
-  end
-
-  # Handle denied requests - apply stealth profile if configured
+  # Handle denied requests - apply stealth profile if configured.
+  #
+  # trust_level is now a SafeTrust atom (:untrusted, :authenticated, :internal).
+  # We convert to string for stealth profile map lookups and JSON responses,
+  # since stealth profiles use string keys matching the DSL v1 format.
   defp handle_denial(conn, rule, trust_level) do
     stealth_profile = get_stealth_profile(rule.stealth_profile)
+    trust_str = Atom.to_string(trust_level)
 
     {status_code, response_body} =
       case stealth_profile do
         nil ->
-          # No stealth - return clear error
+          # No stealth - return clear error with trust/exposure atoms as strings
           {403, %{
             error: "Forbidden",
             message: "Insufficient trust level for this operation",
             required: rule.exposure,
-            provided: trust_level
+            provided: trust_str
           }}
 
         profile when is_map(profile) ->
-          # Apply stealth - return configured status for trust level
-          code = get_stealth_code(profile, trust_level, rule.exposure)
+          # Apply stealth - return configured status for trust level.
+          # Stealth profile keys are strings matching DSL v1 format.
+          code = get_stealth_code(profile, trust_str, rule.exposure)
           message = get_stealth_message(code)
           {code, %{error: message}}
       end
@@ -689,13 +715,26 @@ defmodule HttpCapabilityGateway.Gateway do
         |> send_resp(503, Jason.encode!(response))
 
       true ->
-        # Ready to serve traffic
-        rule_count = :ets.info(policy_table, :size)
+        # Ready to serve traffic.
+        # Report rule counts from both main and regex tables.
+        regex_table = Application.get_env(:http_capability_gateway, :policy_regex_table)
+
+        main_count = :ets.info(policy_table, :size)
+
+        regex_count =
+          if regex_table && :ets.whereis(regex_table) != :undefined,
+            do: :ets.info(regex_table, :size),
+            else: 0
+
+        rate_limiter_buckets = RateLimiter.bucket_count()
 
         response = %{
           status: "ready",
           service: "http-capability-gateway",
-          policy_rules: rule_count
+          policy_rules: main_count + regex_count,
+          main_table_rules: main_count,
+          regex_table_rules: regex_count,
+          rate_limiter_buckets: rate_limiter_buckets
         }
 
         conn

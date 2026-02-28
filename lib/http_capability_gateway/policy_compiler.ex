@@ -89,74 +89,82 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
 
     Logger.info("Compiling policy for service: #{service_name}")
 
-    # Atomic policy reload strategy:
+    # Atomic policy reload strategy with DUAL ETS tables:
     #
-    # The previous implementation deleted the old ETS table and created a new
-    # one with the same name. During the window between delete and successful
-    # compilation (which can take milliseconds for large policies), any
-    # in-flight request that calls PolicyCompiler.lookup/3 would hit a missing
-    # table and receive a 503 error. Under high traffic, this creates a
-    # reliability gap during every policy reload.
+    # We maintain two ETS tables per policy:
+    #   1. Main table: exact literal routes ({:exact, path, verb}) and
+    #      global rules ({:global, verb}) for O(1) lookups.
+    #   2. Regex table: regex route patterns ({pattern, verb}) for O(r)
+    #      Tier 2 scans. Keeping regex routes in a dedicated table means
+    #      Tier 2 scans read ONLY regex entries (no filtering needed).
     #
-    # The fix uses an atomic swap pattern:
+    # The atomic swap pattern applies to BOTH tables as a pair:
     #
-    #   1. Create a temporary ETS table with a unique name (using monotonic
-    #      time as suffix to guarantee uniqueness within this BEAM instance).
-    #   2. Compile all policy rules into the temporary table.
+    #   1. Create a temporary main table and a temporary regex table,
+    #      each with a unique name (monotonic time suffix).
+    #   2. Compile all policy rules into the appropriate temporary table.
     #   3. If compilation SUCCEEDS:
-    #      a. Update the application env :policy_table to point to the new table.
-    #      b. Delete the old table (if any).
-    #      The app env update is atomic from the perspective of concurrent readers
-    #      because Application.put_env/3 is a single operation -- readers either
-    #      see the old value or the new value, never a partial state.
+    #      a. Update :policy_table to point to the new main table name.
+    #      b. Update :policy_regex_table to point to the new regex table name.
+    #      c. Delete both old tables (if any).
     #   4. If compilation FAILS:
-    #      a. Delete the temporary table.
-    #      b. Leave the old table and app env untouched.
-    #      In-flight requests continue using the previous (valid) policy.
+    #      a. Delete both temporary tables.
+    #      b. Leave the old tables and app env untouched.
     #
-    # This guarantees zero-downtime policy reloads: there is never a moment
-    # where no valid policy table exists.
-    #
-    # Note: In-flight requests that already resolved the old table reference
-    # via Application.get_env will complete against the old table. ETS lookups
-    # on a table that is about to be deleted are safe -- :ets.lookup returns
-    # results atomically per-key, and deletion only takes effect after all
-    # concurrent operations on that key complete.
-    temp_name = :"#{table_name}_#{System.monotonic_time()}"
+    # This guarantees zero-downtime policy reloads for the entire table pair.
+    ts = System.monotonic_time()
+    temp_main_name = :"#{table_name}_#{ts}"
+    temp_regex_name = :"#{table_name}_regex_#{ts}"
 
-    table = :ets.new(temp_name, [:set, :public, :named_table, read_concurrency: true])
+    main_table = :ets.new(temp_main_name, [:set, :public, :named_table, read_concurrency: true])
+    regex_table = :ets.new(temp_regex_name, [:set, :public, :named_table, read_concurrency: true])
 
     errors =
       []
-      |> compile_global_verbs(policy, table)
-      |> compile_route_overrides(policy, table)
+      |> compile_global_verbs(policy, main_table)
+      |> compile_route_overrides(policy, main_table, regex_table)
 
     case errors do
       [] ->
-        rule_count = :ets.info(table, :size)
-        Logger.info("Policy compilation succeeded", rules: rule_count, service: service_name)
+        main_count = :ets.info(main_table, :size)
+        regex_count = :ets.info(regex_table, :size)
+        total_count = main_count + regex_count
 
-        # Atomic swap: update application env to point to the new table,
-        # then delete the old table. The order matters -- we must update
-        # the reference BEFORE deleting the old table to avoid a gap.
-        old_table = Application.get_env(:http_capability_gateway, :policy_table)
-        Application.put_env(:http_capability_gateway, :policy_table, temp_name)
+        Logger.info("Policy compilation succeeded",
+          rules: total_count,
+          main_rules: main_count,
+          regex_rules: regex_count,
+          service: service_name
+        )
 
-        # Delete the old table only if it exists and is still registered.
-        # :ets.whereis/1 returns :undefined for tables that have already
-        # been deleted (e.g., if this is the first compilation at startup).
-        if old_table && :ets.whereis(old_table) != :undefined do
-          Logger.debug("Deleting old policy table", table: old_table)
-          :ets.delete(old_table)
+        # Atomic swap: update BOTH application env references, then delete
+        # both old tables. The order matters -- update references BEFORE
+        # deleting old tables to avoid any gap where no table exists.
+        old_main = Application.get_env(:http_capability_gateway, :policy_table)
+        old_regex = Application.get_env(:http_capability_gateway, :policy_regex_table)
+
+        Application.put_env(:http_capability_gateway, :policy_table, temp_main_name)
+        Application.put_env(:http_capability_gateway, :policy_regex_table, temp_regex_name)
+
+        # Delete old tables only if they exist and are still registered.
+        if old_main && :ets.whereis(old_main) != :undefined do
+          Logger.debug("Deleting old main policy table", table: old_main)
+          :ets.delete(old_main)
         end
 
-        {:ok, temp_name}
+        if old_regex && :ets.whereis(old_regex) != :undefined do
+          Logger.debug("Deleting old regex policy table", table: old_regex)
+          :ets.delete(old_regex)
+        end
+
+        {:ok, temp_main_name}
 
       errors ->
-        # Compilation failed -- clean up the temporary table and leave
-        # the existing policy table (if any) in place. This preserves
-        # the last known good policy for in-flight and future requests.
-        :ets.delete(table)
+        # Compilation failed -- clean up BOTH temporary tables and leave
+        # the existing tables (if any) in place. This preserves the last
+        # known good policy for in-flight and future requests.
+        :ets.delete(main_table)
+        :ets.delete(regex_table)
         Logger.error("Policy compilation failed", errors: errors, service: service_name)
         {:error, Enum.reverse(errors)}
     end
@@ -189,38 +197,40 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
     #
     # Tier 1: Exact literal path match via ETS key (O(1))
     #   If the route pattern is a literal string (no regex metacharacters),
-    #   it was stored with key {:exact, path, verb} during compilation.
+    #   it was stored with key {:exact, path, verb} in the main table.
     #   This catches 90%+ of lookups in typical policy files.
     #
     # Tier 2: Route-specific regex patterns (O(r) where r = regex routes)
     #   For patterns containing regex metacharacters (e.g., "[0-9]+"),
-    #   iterate only through regex route rules and test each pattern.
-    #   Route rules override global rules.
+    #   iterate ONLY through the dedicated regex table. This avoids scanning
+    #   exact routes and global rules — the regex table contains only regex
+    #   patterns, making Tier 2 scans proportional to the number of regex
+    #   routes (typically 5-10% of all routes).
     #
     # Tier 3: Global rules (O(1))
-    #   If no route matches, check global verb rules via {:global, verb}.
-    #
-    # This replaces the previous O(n) :ets.tab2list approach which
-    # iterated through ALL rules (global + route) for every request.
-    # For a 1000-route policy, this reduces from 1000 regex evaluations
-    # to 1 hash lookup (90% of cases) or ~50 regex evaluations (10%).
+    #   If no route matches, check global verb rules via {:global, verb}
+    #   in the main table.
     #
     # Inspired by cadre-router's oneOfGrouped first-segment dispatch
     # and aerie's trie-based verb governance.
 
-    # Tier 1: Exact literal path → O(1)
+    # Tier 1: Exact literal path → O(1) from main table
     case :ets.lookup(table, {:exact, path, verb}) do
       [{_key, rule}] ->
         {:ok, rule}
 
       [] ->
-        # Tier 2: Regex route patterns → O(r)
-        case lookup_regex_routes(table, path, verb) do
+        # Tier 2: Regex route patterns → O(r) from dedicated regex table.
+        # The regex table name is derived from the main table name by the
+        # convention established in compile/2 (stored in :policy_regex_table).
+        regex_table = Application.get_env(:http_capability_gateway, :policy_regex_table)
+
+        case lookup_regex_routes(regex_table, path, verb) do
           {:ok, _rule} = result ->
             result
 
           {:error, :no_match} ->
-            # Tier 3: Global rules → O(1)
+            # Tier 3: Global rules → O(1) from main table
             case :ets.lookup(table, {:global, verb}) do
               [{_key, rule}] -> {:ok, rule}
               [] -> {:error, :no_match}
@@ -229,23 +239,24 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
     end
   end
 
-  # Iterate only through regex route rules (not global, not exact).
-  # These are stored with key {pattern_string, verb} where pattern_string
-  # contains regex metacharacters.
-  defp lookup_regex_routes(table, path, verb) do
-    # Get all rules, filter to regex routes only
-    rules = :ets.tab2list(table)
+  # Iterate through the DEDICATED regex route table.
+  #
+  # Because regex routes are stored in their own ETS table, there is no
+  # need to filter out {:global, _} or {:exact, _, _} entries — every
+  # entry in this table is a regex route pattern. This makes Tier 2
+  # scans faster and simpler.
+  #
+  # If the regex table is nil (e.g., during tests without full compilation),
+  # we return :no_match immediately.
+  defp lookup_regex_routes(nil, _path, _verb), do: {:error, :no_match}
 
-    route_rules =
-      Enum.filter(rules, fn
-        {{:global, _}, _} -> false
-        {{:exact, _, _}, _} -> false
-        _ -> true
-      end)
+  defp lookup_regex_routes(regex_table, path, verb) do
+    # Read all regex route rules — this table contains ONLY regex patterns.
+    regex_rules = :ets.tab2list(regex_table)
 
     # Find first route pattern that matches the path
     matching_pattern =
-      Enum.find_value(route_rules, fn {{pattern, _v}, rule} ->
+      Enum.find_value(regex_rules, fn {{pattern, _v}, rule} ->
         if Regex.match?(rule.path_regex, path), do: pattern, else: nil
       end)
 
@@ -255,7 +266,7 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
 
       pattern ->
         # Route matched — check if verb is allowed for this route
-        case Enum.find(route_rules, fn {{p, v}, _} -> p == pattern and v == verb end) do
+        case Enum.find(regex_rules, fn {{p, v}, _} -> p == pattern and v == verb end) do
           {_key, rule} -> {:ok, rule}
           nil -> {:error, :no_match}
         end
@@ -293,14 +304,14 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
 
   # Compile route-specific overrides that take precedence over globals.
   #
-  # For tiered lookup, literal paths (those without regex metacharacters)
-  # are stored with key {:exact, path, verb} for O(1) hash lookup.
-  # Patterns containing metacharacters are stored with {pattern, verb}
-  # for regex matching in Tier 2.
+  # Routes are split between two ETS tables based on path type:
+  #   - Literal paths (no regex metacharacters) → main table with {:exact, path, verb}
+  #   - Regex patterns → dedicated regex table with {pattern, verb}
   #
-  # This allows the lookup function to try exact O(1) match first,
-  # falling back to regex only for paths that actually need it.
-  defp compile_route_overrides(errors, policy, table) do
+  # This separation allows Tier 2 regex scans to iterate ONLY over regex
+  # routes (the regex table), avoiding the need to filter out exact and
+  # global entries during every request.
+  defp compile_route_overrides(errors, policy, main_table, regex_table) do
     # DSL v1 format: governance.routes is a list of route configs
     routes = get_in(policy, ["governance", "routes"]) || []
 
@@ -312,7 +323,9 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
       # Compile the regex pattern
       case Regex.compile(path_pattern) do
         {:ok, path_regex} ->
-          # Detect whether this is a literal path (no regex metacharacters)
+          # Detect whether this is a literal path (no regex metacharacters).
+          # Literal paths go into the main table for O(1) exact lookup;
+          # regex patterns go into the dedicated regex table for Tier 2 scans.
           is_literal = not Regex.match?(~r/[\[\](){}.*+?^$|\\]/, path_pattern)
 
           # Compile each verb for this route
@@ -333,11 +346,11 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
               }
 
               if is_literal do
-                # Literal path → store with :exact key for O(1) lookup
-                :ets.insert(table, {{:exact, path_pattern, verb_atom}, rule})
+                # Literal path → main table with :exact key for O(1) lookup
+                :ets.insert(main_table, {{:exact, path_pattern, verb_atom}, rule})
               else
-                # Regex pattern → store with pattern string key for Tier 2
-                :ets.insert(table, {{path_pattern, verb_atom}, rule})
+                # Regex pattern → dedicated regex table for Tier 2 scans
+                :ets.insert(regex_table, {{path_pattern, verb_atom}, rule})
               end
 
               verb_acc
@@ -366,40 +379,62 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
   end
 
   @doc """
-  Returns statistics about a compiled policy table.
+  Returns statistics about compiled policy tables.
+
+  Counts rules from BOTH the main table (exact routes + global rules)
+  and the dedicated regex table (regex route patterns).
 
   ## Parameters
 
-    - `table`: ETS table reference from compile/1
+    - `table`: Main ETS table reference from compile/1. The regex table
+      is automatically resolved from :policy_regex_table in application env.
 
   ## Returns
 
     Map with statistics:
-    - `:total_rules` - Total number of rules in table
-    - `:global_rules` - Number of global verb rules
-    - `:route_rules` - Number of route-specific rules
-    - `:verbs` - List of HTTP verbs with rules
+    - `:total_rules` - Total number of rules across both tables
+    - `:global_rules` - Number of global verb rules (main table)
+    - `:exact_routes` - Number of literal path routes (main table)
+    - `:regex_routes` - Number of regex pattern routes (regex table)
+    - `:route_rules` - exact_routes + regex_routes (total route count)
+    - `:verbs` - List of HTTP verbs with rules (from both tables)
 
   ## Examples
 
       iex> {:ok, table} = PolicyCompiler.compile(policy)
       iex> PolicyCompiler.stats(table)
-      %{total_rules: 5, global_rules: 3, route_rules: 2, verbs: [:GET, :POST, :DELETE]}
+      %{total_rules: 5, global_rules: 3, exact_routes: 1, regex_routes: 1, route_rules: 2, verbs: [:GET, :POST]}
   """
   @spec stats(table :: ets_table()) :: map()
   def stats(table) do
-    rules = :ets.tab2list(table)
-    total = length(rules)
+    # Read rules from the main table (exact routes + global rules).
+    main_rules = :ets.tab2list(table)
 
-    {global_count, route_count, exact_count} =
-      Enum.reduce(rules, {0, 0, 0}, fn
-        {{:global, _verb}, _rule}, {g, r, e} -> {g + 1, r, e}
-        {{:exact, _path, _verb}, _rule}, {g, r, e} -> {g, r, e + 1}
-        {{_path, _verb}, _rule}, {g, r, e} -> {g, r + 1, e}
+    {global_count, exact_count} =
+      Enum.reduce(main_rules, {0, 0}, fn
+        {{:global, _verb}, _rule}, {g, e} -> {g + 1, e}
+        {{:exact, _path, _verb}, _rule}, {g, e} -> {g, e + 1}
+        _, {g, e} -> {g, e}
       end)
 
+    # Read rules from the dedicated regex table (if it exists).
+    regex_table = Application.get_env(:http_capability_gateway, :policy_regex_table)
+
+    regex_rules =
+      if regex_table && :ets.whereis(regex_table) != :undefined do
+        :ets.tab2list(regex_table)
+      else
+        []
+      end
+
+    regex_count = length(regex_rules)
+    total = length(main_rules) + regex_count
+
+    # Collect verbs from both tables for the summary.
+    all_rules = main_rules ++ regex_rules
+
     verbs =
-      rules
+      all_rules
       |> Enum.map(fn {_key, rule} -> rule.verb end)
       |> Enum.uniq()
       |> Enum.sort()
@@ -407,9 +442,9 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
     %{
       total_rules: total,
       global_rules: global_count,
-      route_rules: route_count,
       exact_routes: exact_count,
-      regex_routes: route_count,
+      regex_routes: regex_count,
+      route_rules: exact_count + regex_count,
       verbs: verbs
     }
   end
