@@ -73,6 +73,14 @@ htmlcov/
 *.log
 /logs/
 
+# Zig
+ffi/zig/zig-out/
+**/.zig-cache/
+
+# Shared libraries
+*.so
+*.dylib
+
 # Temp
 /tmp/
 *.tmp
