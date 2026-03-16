@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
 defmodule HttpCapabilityGateway do
   @moduledoc """
   HTTP Capability-Based Security Gateway.
