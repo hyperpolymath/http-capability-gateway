@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+# Clade declaration — part of the gv-clade-index registry
+# See: https://github.com/hyperpolymath/gv-clade-index
+
+[identity]
+uuid = "e9b23afb-7071-5639-8ed9-7a0d162fc790"
+primary-forge = "github"
+primary-owner = "hyperpolymath"
+canonical-name = "http-capability-gateway"
+prefixed-name = "pt-http-capability-gateway"
+
+[clade]
+primary = "pt"
+secondary = ["sc"]
+assigned = "2026-03-16"
+rationale = ""
+
+[forges]
+github = "hyperpolymath/http-capability-gateway"
+gitlab = "hyperpolymath/http-capability-gateway"
+bitbucket = "hyperpolymath/http-capability-gateway"
+
+[lineage]
+type = "standalone"
+parent = "HTTP capability-based gateway"
+born = "2026-03-16"
