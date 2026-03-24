@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# http-capability-gateway — Stapeln/Selur service definition.
+#
+# HTTP capability-based gateway built with Elixir/Phoenix. Multi-stage
+# build: hexpm/elixir Alpine builder + Alpine runtime. Exposes HTTP
+# gateway on port 4000.
+#
+# Usage:
+#   podman-compose -f selur-compose.toml up -d
+#   just stack-up
+#
+# Required secrets (set via environment or .env file):
+#   SECRET_KEY_BASE  — Phoenix secret key (mix phx.gen.secret)
+
+[project]
+name = "http-capability-gateway"
+
+# =============================================================================
+# HTTP Capability Gateway — Phoenix application
+# =============================================================================
+[services.app]
+build = { context = ".", dockerfile = "Containerfile" }
+restart = "unless-stopped"
+ports = ["4000:4000"]
+networks = ["gateway-internal"]
+environment = [
+  "MIX_ENV=prod",
+  "PHX_HOST=localhost",
+  "PORT=4000",
+]
+# Secrets — inject at deploy time via environment or .env file:
+#   SECRET_KEY_BASE=<mix phx.gen.secret>
+healthcheck = { test = "wget --no-verbose --tries=1 --spider http://localhost:4000/health || exit 1", interval = "30s", timeout = "5s", retries = 3 }
+
+# =============================================================================
+# Networks
+# =============================================================================
+[networks.gateway-internal]
+driver = "bridge"
