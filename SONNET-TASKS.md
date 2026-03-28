@@ -37,9 +37,9 @@ STATE.scm claims 95% completion. That is aspirational. The reality:
 ## TASK 1: Implement Missing PolicyCompiler Functions (is_verb_allowed?, get_stealth_config)
 
 **Files:**
-- `/var/mnt/eclipse/repos/http-capability-gateway/lib/http_capability_gateway/policy_compiler.ex`
-- `/var/mnt/eclipse/repos/http-capability-gateway/test/policy_property_test.exs`
-- `/var/mnt/eclipse/repos/http-capability-gateway/test/performance_test.exs`
+- `/var$REPOS_DIR/http-capability-gateway/lib/http_capability_gateway/policy_compiler.ex`
+- `/var$REPOS_DIR/http-capability-gateway/test/policy_property_test.exs`
+- `/var$REPOS_DIR/http-capability-gateway/test/performance_test.exs`
 
 **Problem:**
 `test/policy_property_test.exs` and `test/performance_test.exs` call three functions that do not exist:
@@ -74,7 +74,7 @@ Additionally, the property tests reference ETS table names `:gateway_rules` (lin
 
 **Verification:**
 ```bash
-cd /var/mnt/eclipse/repos/http-capability-gateway
+cd /var$REPOS_DIR/http-capability-gateway
 mix test test/policy_property_test.exs --trace 2>&1 | tail -30
 mix test test/performance_test.exs --trace 2>&1 | tail -30
 ```
@@ -86,8 +86,8 @@ All property tests and performance tests must pass. Zero failures.
 ## TASK 2: Fix Gateway Tests (assigns, halted, empty body assertions)
 
 **Files:**
-- `/var/mnt/eclipse/repos/http-capability-gateway/lib/http_capability_gateway/gateway.ex`
-- `/var/mnt/eclipse/repos/http-capability-gateway/test/gateway_test.exs`
+- `/var$REPOS_DIR/http-capability-gateway/lib/http_capability_gateway/gateway.ex`
+- `/var$REPOS_DIR/http-capability-gateway/test/gateway_test.exs`
 
 **Problem:**
 The gateway tests have multiple mismatches with the actual gateway implementation:
@@ -130,7 +130,7 @@ The gateway tests have multiple mismatches with the actual gateway implementatio
 
 **Verification:**
 ```bash
-cd /var/mnt/eclipse/repos/http-capability-gateway
+cd /var$REPOS_DIR/http-capability-gateway
 mix test test/gateway_test.exs --trace 2>&1 | tail -50
 ```
 
@@ -141,9 +141,9 @@ All 22 gateway tests must pass. Zero failures.
 ## TASK 3: Fix Main Module Stub and Dead Code
 
 **Files:**
-- `/var/mnt/eclipse/repos/http-capability-gateway/lib/http_capability_gateway.ex`
-- `/var/mnt/eclipse/repos/http-capability-gateway/test/http_capability_gateway_test.exs`
-- `/var/mnt/eclipse/repos/http-capability-gateway/lib/http_capability_gateway/policy_compiler.ex`
+- `/var$REPOS_DIR/http-capability-gateway/lib/http_capability_gateway.ex`
+- `/var$REPOS_DIR/http-capability-gateway/test/http_capability_gateway_test.exs`
+- `/var$REPOS_DIR/http-capability-gateway/lib/http_capability_gateway/policy_compiler.ex`
 
 **Problem:**
 
@@ -170,7 +170,7 @@ All 22 gateway tests must pass. Zero failures.
 
 **Verification:**
 ```bash
-cd /var/mnt/eclipse/repos/http-capability-gateway
+cd /var$REPOS_DIR/http-capability-gateway
 mix test test/http_capability_gateway_test.exs --trace 2>&1 | tail -10
 mix compile --warnings-as-errors 2>&1 | tail -20
 ```
@@ -182,8 +182,8 @@ The test must pass. Compilation must succeed with no warnings about unused funct
 ## TASK 4: Fix Example Policy and Empty config/policy.yaml
 
 **Files:**
-- `/var/mnt/eclipse/repos/http-capability-gateway/config/policy.yaml`
-- `/var/mnt/eclipse/repos/http-capability-gateway/examples/policy-dev.yaml`
+- `/var$REPOS_DIR/http-capability-gateway/config/policy.yaml`
+- `/var$REPOS_DIR/http-capability-gateway/examples/policy-dev.yaml`
 
 **Problem:**
 
@@ -245,7 +245,7 @@ The test must pass. Compilation must succeed with no warnings about unused funct
 
 **Verification:**
 ```bash
-cd /var/mnt/eclipse/repos/http-capability-gateway
+cd /var$REPOS_DIR/http-capability-gateway
 # Validate config/policy.yaml can be loaded
 mix run -e '
 {:ok, policy} = HttpCapabilityGateway.PolicyLoader.load_from_file("config/policy.yaml")
@@ -270,8 +270,8 @@ Both files must load, validate, and compile without errors.
 ## TASK 5: Fix Containerfile and Add Mix Release Config
 
 **Files:**
-- `/var/mnt/eclipse/repos/http-capability-gateway/Containerfile`
-- `/var/mnt/eclipse/repos/http-capability-gateway/mix.exs`
+- `/var$REPOS_DIR/http-capability-gateway/Containerfile`
+- `/var$REPOS_DIR/http-capability-gateway/mix.exs`
 
 **Problem:**
 
@@ -287,8 +287,8 @@ Both files must load, validate, and compile without errors.
 
 1. Create the `priv/` directory (it can be empty, just needs to exist):
    ```bash
-   mkdir -p /var/mnt/eclipse/repos/http-capability-gateway/priv
-   touch /var/mnt/eclipse/repos/http-capability-gateway/priv/.gitkeep
+   mkdir -p /var$REPOS_DIR/http-capability-gateway/priv
+   touch /var$REPOS_DIR/http-capability-gateway/priv/.gitkeep
    ```
 
 2. Add a `releases` section to `mix.exs` project config:
@@ -307,7 +307,7 @@ Both files must load, validate, and compile without errors.
 
 **Verification:**
 ```bash
-cd /var/mnt/eclipse/repos/http-capability-gateway
+cd /var$REPOS_DIR/http-capability-gateway
 
 # Verify priv/ exists
 test -d priv && echo "priv/ exists" || echo "FAIL: priv/ missing"
@@ -329,9 +329,9 @@ MIX_ENV=prod mix run -e 'IO.puts("OK")' 2>&1
 ## TASK 6: Fix Unused Logging Functions and Wire Them Into Gateway
 
 **Files:**
-- `/var/mnt/eclipse/repos/http-capability-gateway/lib/http_capability_gateway/logging.ex`
-- `/var/mnt/eclipse/repos/http-capability-gateway/lib/http_capability_gateway/gateway.ex`
-- `/var/mnt/eclipse/repos/http-capability-gateway/lib/http_capability_gateway/proxy.ex`
+- `/var$REPOS_DIR/http-capability-gateway/lib/http_capability_gateway/logging.ex`
+- `/var$REPOS_DIR/http-capability-gateway/lib/http_capability_gateway/gateway.ex`
+- `/var$REPOS_DIR/http-capability-gateway/lib/http_capability_gateway/proxy.ex`
 
 **Problem:**
 The `Logging` module defines 8 public functions but only 1 is called from production code (`log_policy_load/3`). The other 7 are dead code:
@@ -359,7 +359,7 @@ The Gateway module has its own inline `log_decision/7` private function that dup
 
 **Verification:**
 ```bash
-cd /var/mnt/eclipse/repos/http-capability-gateway
+cd /var$REPOS_DIR/http-capability-gateway
 mix compile --warnings-as-errors 2>&1 | tail -20
 # Check that Logging functions are actually called now
 grep -rn "Logging\." lib/ --include="*.ex" | grep -v "^.*:#" | wc -l
@@ -374,7 +374,7 @@ Compilation must succeed with zero warnings. At least 6 of the 8 `Logging` publi
 ## TASK 7: Fix dev.exs Phoenix Config and policy_hot_reload
 
 **Files:**
-- `/var/mnt/eclipse/repos/http-capability-gateway/config/dev.exs`
+- `/var$REPOS_DIR/http-capability-gateway/config/dev.exs`
 
 **Problem:**
 
@@ -394,7 +394,7 @@ Option (a) is preferred -- do not configure features that do not exist.
 
 **Verification:**
 ```bash
-cd /var/mnt/eclipse/repos/http-capability-gateway
+cd /var$REPOS_DIR/http-capability-gateway
 MIX_ENV=dev mix compile --warnings-as-errors 2>&1 | tail -10
 grep -n "phoenix" config/dev.exs  # Should return nothing
 grep -n "policy_hot_reload" config/*.exs  # Should return nothing (if removed)
@@ -407,7 +407,7 @@ No warnings. No reference to phoenix in dev.exs.
 ## TASK 8: Fix API Documentation to Match Actual Code
 
 **Files:**
-- `/var/mnt/eclipse/repos/http-capability-gateway/docs/API.md`
+- `/var$REPOS_DIR/http-capability-gateway/docs/API.md`
 
 **Problem:**
 `docs/API.md` documents functions that do not exist and has incorrect signatures:
@@ -438,7 +438,7 @@ Update `docs/API.md` to match the actual code. For every function documented:
 
 **Verification:**
 ```bash
-cd /var/mnt/eclipse/repos/http-capability-gateway
+cd /var$REPOS_DIR/http-capability-gateway
 # Extract all documented function names from API.md
 grep -oP '#### `\K[^`]+' docs/API.md | sort > /tmp/api-docs-funcs.txt
 
@@ -457,9 +457,9 @@ Every function documented in API.md must exist in the source code with the docum
 ## TASK 9: Add Elixir Release to mix.exs and Create config/runtime.exs
 
 **Files:**
-- `/var/mnt/eclipse/repos/http-capability-gateway/mix.exs`
-- `/var/mnt/eclipse/repos/http-capability-gateway/config/runtime.exs` (new file)
-- `/var/mnt/eclipse/repos/http-capability-gateway/config/prod.exs`
+- `/var$REPOS_DIR/http-capability-gateway/mix.exs`
+- `/var$REPOS_DIR/http-capability-gateway/config/runtime.exs` (new file)
+- `/var$REPOS_DIR/http-capability-gateway/config/prod.exs`
 
 **Problem:**
 `config/prod.exs` line 8 calls `System.fetch_env!("POLICY_PATH")` which executes at compile time. When building a release, this means `POLICY_PATH` must be set during `mix release` -- but environment variables should be read at runtime, not compile time. This is a standard Elixir release footgun.
@@ -485,7 +485,7 @@ Every function documented in API.md must exist in the source code with the docum
 
 **Verification:**
 ```bash
-cd /var/mnt/eclipse/repos/http-capability-gateway
+cd /var$REPOS_DIR/http-capability-gateway
 # Build a release without POLICY_PATH set
 MIX_ENV=prod mix release 2>&1 | tail -10
 # Should succeed without "POLICY_PATH not set" error
@@ -501,7 +501,7 @@ test -f config/runtime.exs && echo "runtime.exs exists" || echo "FAIL"
 ## TASK 10: Update STATE.scm to Reflect Actual Status
 
 **Files:**
-- `/var/mnt/eclipse/repos/http-capability-gateway/.machine_readable/STATE.scm`
+- `/var$REPOS_DIR/http-capability-gateway/.machine_readable/STATE.scm`
 
 **Problem:**
 STATE.scm claims:
@@ -524,7 +524,7 @@ Update STATE.scm to reflect reality:
 
 **Verification:**
 ```bash
-cd /var/mnt/eclipse/repos/http-capability-gateway
+cd /var$REPOS_DIR/http-capability-gateway
 cat .machine_readable/STATE.scm | head -30
 # Verify overall-completion is 60 or similar honest number
 grep "overall-completion" .machine_readable/STATE.scm
@@ -539,7 +539,7 @@ The completion percentage must be an honest number (50-65% range before fixes, 7
 After completing all tasks, run the full test suite and compilation checks:
 
 ```bash
-cd /var/mnt/eclipse/repos/http-capability-gateway
+cd /var$REPOS_DIR/http-capability-gateway
 
 # 1. Clean compile with warnings as errors
 mix clean
