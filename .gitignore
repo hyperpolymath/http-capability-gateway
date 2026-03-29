@@ -85,3 +85,4 @@ ffi/zig/zig-out/
 /tmp/
 *.tmp
 *.bak
+SONNET-TASKS.md
