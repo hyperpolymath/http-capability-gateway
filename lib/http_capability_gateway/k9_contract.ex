@@ -148,7 +148,7 @@ defmodule HttpCapabilityGateway.K9Contract do
 
   # Valid breach policy atoms — used as an allowlist to prevent atom
   # exhaustion when parsing breach policies from external config.
-  # SECURITY: Never call String.to_atom on user input. Use parse_breach_policy/1.
+  # SECURITY: Never call String.to_existing_atom on user input. Use parse_breach_policy/1.
   @valid_breach_policies [:log, :alert, :circuit_break, :fallback]
 
   # Valid HTTP verb atoms for contract matching. :ANY matches all verbs.
@@ -763,7 +763,7 @@ defmodule HttpCapabilityGateway.K9Contract do
   end
 
   # Validate that the verb field is a known HTTP verb atom from the allowlist.
-  # SECURITY: We check against @valid_verbs instead of calling String.to_atom
+  # SECURITY: We check against @valid_verbs instead of calling String.to_existing_atom
   # to prevent atom table exhaustion.
   @spec validate_verb(map()) :: {:ok, atom()} | {:error, term()}
   defp validate_verb(attrs) do
@@ -795,7 +795,7 @@ defmodule HttpCapabilityGateway.K9Contract do
   end
 
   # Validate that the breach_policy field is a known policy atom from the allowlist.
-  # SECURITY: We check against @valid_breach_policies instead of calling String.to_atom
+  # SECURITY: We check against @valid_breach_policies instead of calling String.to_existing_atom
   # to prevent atom table exhaustion from user-supplied config.
   @spec validate_breach_policy(map()) :: {:ok, breach_policy()} | {:error, term()}
   defp validate_breach_policy(attrs) do
@@ -814,7 +814,7 @@ defmodule HttpCapabilityGateway.K9Contract do
   @doc """
   Safely parse a breach policy string to its corresponding atom.
 
-  Uses pattern matching on known strings — NEVER String.to_atom.
+  Uses pattern matching on known strings — NEVER String.to_existing_atom.
   Unknown or malformed input defaults to `:log` (safest policy).
 
   ## Parameters

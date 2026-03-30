@@ -136,7 +136,7 @@ defmodule HttpCapabilityGateway.Proxy do
 
   # Make HTTP request to backend using Req
   defp make_backend_request(method, url, headers, body) do
-    method_atom = method |> String.downcase() |> String.to_atom()
+    method_atom = method |> String.downcase() |> String.to_existing_atom()
 
     options = [
       method: method_atom,

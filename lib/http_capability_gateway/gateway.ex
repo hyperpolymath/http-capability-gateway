@@ -51,7 +51,7 @@ defmodule HttpCapabilityGateway.Gateway do
   # which is a DoS vector -- any client can crash the handler by sending
   # an exotic HTTP method like PROPFIND, MKCOL, REPORT, or any arbitrary
   # string. The BEAM atom table is finite (~1M atoms) and not garbage
-  # collected, so String.to_atom/1 is equally dangerous (atom exhaustion).
+  # collected, so String.to_existing_atom/1 is equally dangerous (atom exhaustion).
   #
   # Instead, we maintain an explicit allowlist of the seven standard HTTP
   # methods supported by this gateway. Any method not in this map is
@@ -172,7 +172,7 @@ defmodule HttpCapabilityGateway.Gateway do
   # This plug runs BEFORE the RateLimiter plug in the pipeline so that
   # rate limiting decisions can be based on the authenticated trust level.
   # The trust level is parsed through SafeTrust.parse_trust/1 which
-  # safely maps strings to atoms from a fixed set (no String.to_atom).
+  # safely maps strings to atoms from a fixed set (no String.to_existing_atom).
   #
   # The trust level is stored in conn.assigns[:trust_level] and reused
   # by both the rate limiter and the request handler, avoiding duplicate
@@ -218,7 +218,7 @@ defmodule HttpCapabilityGateway.Gateway do
   #
   # Uses the @valid_methods allowlist to avoid the DoS vector inherent in
   # String.to_existing_atom/1 (which raises ArgumentError on unknown atoms)
-  # and String.to_atom/1 (which can exhaust the BEAM atom table).
+  # and String.to_existing_atom/1 (which can exhaust the BEAM atom table).
   #
   # Returns the atom for known HTTP methods, or nil for unknown methods.
   # The caller (handle_request/1) uses this to short-circuit unknown methods
@@ -254,7 +254,7 @@ defmodule HttpCapabilityGateway.Gateway do
   Unknown HTTP methods (PROPFIND, MKCOL, REPORT, arbitrary strings) are
   rejected with 405 Method Not Allowed before reaching policy evaluation.
   This prevents ArgumentError crashes from String.to_existing_atom/1 and
-  atom table exhaustion from String.to_atom/1, both of which are DoS vectors.
+  atom table exhaustion from String.to_existing_atom/1, both of which are DoS vectors.
   """
   def handle_request(conn) do
     start_time = System.monotonic_time()

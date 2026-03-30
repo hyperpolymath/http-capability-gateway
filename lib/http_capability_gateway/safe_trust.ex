@@ -53,7 +53,7 @@ defmodule HttpCapabilityGateway.SafeTrust do
 
   # Valid trust and exposure atoms — used for guards and documentation.
   # These atoms are compile-time constants. We never create atoms from
-  # user input (String.to_atom is a DoS vector via atom table exhaustion).
+  # user input (String.to_existing_atom is a DoS vector via atom table exhaustion).
   @valid_trust_levels [:untrusted, :authenticated, :internal]
   @valid_exposure_levels [:public, :authenticated, :internal]
 
@@ -134,7 +134,7 @@ defmodule HttpCapabilityGateway.SafeTrust do
   `parseTrust` function which returns `Untrusted` for unrecognised input.
 
   SECURITY: This function uses pattern matching on known strings, never
-  String.to_atom/1 or String.to_existing_atom/1. This prevents both
+  String.to_existing_atom/1 or String.to_existing_atom/1. This prevents both
   atom table exhaustion (DoS) and ArgumentError crashes.
 
   ## Parameters
