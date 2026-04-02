@@ -1,19 +1,25 @@
 # HTTP Capability Gateway
 
-**A high-performance Elixir HTTP gateway with declarative verb governance and stealth mode.**
+**An Elixir HTTP gateway for declarative verb governance, route policy enforcement, and selective prefiltering.**
 
 image:https://img.shields.io/badge/License-PMPL--1.0-blue.svg[License: PMPL-1.0,link="https://github.com/hyperpolymath/palimpsest-license"]
 ![Elixir 1.19+](https://img.shields.io/badge/Elixir-1.19+-purple.svg)
 ![OTP 27+](https://img.shields.io/badge/OTP-27+-red.svg)
 
-## Overview
+## Current Status
+
+This repository contains a real Elixir gateway implementation, but it should currently be treated as a narrow, in-progress API governance layer rather than a fully proven front door for an entire site.
+
+- The core policy pipeline exists: loader, validator, compiler, gateway, proxy, telemetry.
+- The main remaining gaps are security depth, end-to-end verification, and benchmark evidence.
+- Read `ROADMAP.adoc`, `TEST-NEEDS.md`, and `PROOF-NEEDS.md` together when judging readiness.
 
 HTTP Capability Gateway enforces fine-grained HTTP verb restrictions at the gateway level using a declarative policy language. It provides:
 
 - **Declarative Verb Governance**: Define allowed HTTP verbs globally and per-route
 - **Stealth Mode**: Return configurable status codes (404, 403, etc.) for unauthorized requests
-- **Fast Policy Enforcement**: O(1) verb lookups via ETS, handles >1000 req/s
-- **Trust Level Integration**: Extract trust levels from mTLS certificates or headers
+- **Fast Policy Enforcement Architecture**: ETS-backed lookups and compiled policy rules; benchmark evidence still needs to be formalized
+- **Trust Level Integration**: Current implementation is header-based, with mTLS-oriented direction documented but not the primary proved path yet
 - **Comprehensive Logging**: Structured JSON logs with telemetry metrics
 - **Backend Proxy**: Transparent proxying to backend services with header preservation
 
@@ -35,7 +41,7 @@ mix compile
 
 ### Basic Usage
 
-1. **Create a policy file** (`priv/config/policy.yaml`):
+1. **Create a policy file** (`config/policy.yaml`):
 
 ```yaml
 dsl_version: "1"
@@ -57,9 +63,9 @@ stealth:
 
 ```elixir
 config :http_capability_gateway,
-  policy_file: "priv/config/policy.dev.yaml",
+  policy_path: "examples/policy-dev.yaml",
   backend_url: "http://localhost:4000",
-  port: 8080
+  port: 4000
 ```
 
 3. **Start the gateway**:
@@ -75,15 +81,15 @@ iex -S mix
 
 ```bash
 # Allowed: GET on global route
-curl http://localhost:8080/api/public
+curl http://localhost:4000/api/public
 # Returns: proxied response from backend
 
 # Denied: DELETE not in global verbs
-curl -X DELETE http://localhost:8080/api/public
+curl -X DELETE http://localhost:4000/api/public
 # Returns: 404 (stealth mode)
 
 # Allowed: PUT on specific route
-curl -X PUT http://localhost:8080/api/users/123
+curl -X PUT http://localhost:4000/api/users/123
 # Returns: proxied response from backend
 ```
 
@@ -136,14 +142,14 @@ Valid stealth status codes: `200`, `301`, `302`, `403`, `404`, `410`, `500`, `50
 ### Environment Variables
 
 ```bash
-# Policy file path (default: priv/config/policy.dev.yaml)
-export POLICY_FILE=/path/to/policy.yaml
+# Policy file path (default: config/policy.yaml)
+export POLICY_PATH=/path/to/policy.yaml
 
 # Backend URL (required)
 export BACKEND_URL=http://backend:4000
 
-# Gateway port (default: 8080)
-export PORT=8080
+# Gateway port (default: 4000)
+export PORT=4000
 
 # Trust level header name (default: x-trust-level)
 export TRUST_LEVEL_HEADER=x-trust-level
@@ -158,7 +164,7 @@ import Config
 
 config :http_capability_gateway,
   backend_url: System.get_env("BACKEND_URL", "http://localhost:4000"),
-  port: String.to_integer(System.get_env("PORT", "8080")),
+  port: String.to_integer(System.get_env("PORT", "4000")),
   trust_level_header: System.get_env("TRUST_LEVEL_HEADER", "x-trust-level")
 ```
 
@@ -168,7 +174,7 @@ config :http_capability_gateway,
 import Config
 
 config :http_capability_gateway,
-  policy_file: "priv/config/policy.dev.yaml",
+  policy_path: "examples/policy-dev.yaml",
   log_level: :debug
 ```
 
@@ -178,7 +184,7 @@ config :http_capability_gateway,
 import Config
 
 config :http_capability_gateway,
-  policy_file: System.get_env("POLICY_FILE"),
+  policy_path: System.get_env("POLICY_PATH"),
   log_level: :info
 ```
 
@@ -188,7 +194,7 @@ Extract trust levels from mTLS certificates or HTTP headers:
 
 ```elixir
 # From header (current implementation)
-curl -H "X-Trust-Level: high" http://localhost:8080/api/admin
+curl -H "X-Trust-Level: high" http://localhost:4000/api/admin
 ```
 
 Trust levels can be used for:
@@ -218,15 +224,11 @@ Structured JSON logs with telemetry:
 
 ## Performance
 
-Benchmarks (M1 MacBook Pro, 2023):
+Performance-oriented design is present, but the benchmark story is not yet strong enough to advertise hard numbers as release evidence.
 
-| Metric | Value |
-|--------|-------|
-| Policy compilation (1000 routes) | <100ms |
-| Verb check latency | <1ms |
-| Throughput (sequential) | >1000 req/s |
-| Throughput (50 concurrent) | >2000 req/s |
-| Memory usage (10000 routes) | <50MB |
+- ETS-backed rule lookup is implemented.
+- A performance test file exists.
+- Benchmarking and concurrency validation are still tracked as open work in `ROADMAP.adoc` and `TEST-NEEDS.md`.
 
 ## Testing
 
@@ -247,11 +249,14 @@ mix test --only performance
 mix test --cover
 ```
 
-Test coverage: **76+ tests** across 6 test files:
-- Unit tests (policy pipeline)
-- Integration tests (gateway)
-- Property-based tests (StreamData)
-- Performance tests (benchmarks)
+Current tests cover the policy pipeline and some gateway behavior, but the repo still needs materially stronger evidence in the following areas:
+
+- security tests for token validation, request sanitization, and SSRF resistance
+- end-to-end request lifecycle tests
+- concurrency and reload testing
+- formal benchmark runs
+
+Do not treat the current suite as sufficient proof for whole-site gateway deployment.
 
 ## Architecture
 
@@ -297,34 +302,22 @@ http-capability-gateway/
 │       ├── policy_compiler.ex    # ETS compilation
 │       ├── logging.ex            # Structured logging
 │       └── log_formatter.ex      # JSON log formatter
-├── test/                         # Test suite (76+ tests)
-├── priv/config/                  # Example policies
-├── config/                       # Elixir config files
+├── test/                         # Current automated tests
+├── config/                       # Elixir config files and default policy
+├── examples/                     # Example policies
 └── docs/                         # API documentation
 ```
 
 ## Roadmap
 
-- [x] Phase 1: Foundation (90%)
-  - [x] Policy pipeline (loader, validator, compiler)
-  - [x] HTTP gateway with verb enforcement
-  - [x] Backend proxy
-  - [x] Structured logging
-- [x] Phase 2: Testing (95%)
-  - [x] Unit tests (45 tests)
-  - [x] Integration tests (31 tests)
-  - [x] Property-based tests (7 properties)
-  - [x] Performance tests
-- [ ] Phase 3: Documentation (in progress)
-  - [x] README with quickstart
-  - [ ] API documentation
-  - [ ] Deployment guide
-  - [ ] Policy DSL reference
-- [ ] Phase 4: Production (pending)
-  - [ ] Docker container
-  - [ ] Health checks endpoint
-  - [ ] Prometheus metrics export
-  - [ ] mTLS trust level extraction
+Use `ROADMAP.adoc` as the current roadmap.
+
+The short version is:
+
+- core policy pipeline exists
+- tests exist but are not yet strong enough for broad production claims
+- the recommended near-term role is route-scoped API prefiltering, not full-site gateway responsibility
+- benchmark, E2E, and security-hardening work remain open
 
 ## Contributing
 

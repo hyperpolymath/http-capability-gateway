@@ -15,9 +15,9 @@ set shell := ["bash", "-uc"]
 set dotenv-load := true
 set positional-arguments := true
 
-# Project metadata - CUSTOMIZE THESE
-project := "RSR-template-repo"
-version := "0.1.0"
+# Project metadata
+project := "http-capability-gateway"
+version := "1.0.0"
 tier := "infrastructure"  # 1 | 2 | infrastructure
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -55,29 +55,20 @@ info:
 
 # Build the project (debug mode)
 build *args:
-    @echo "Building {{project}}..."
-    # TODO: Add build command for your language
-    # Rust: cargo build {{args}}
-    # ReScript: npm run build
-    # Elixir: mix compile
+    mix compile {{args}}
 
 # Build in release mode with optimizations
 build-release *args:
-    @echo "Building {{project}} (release)..."
-    # TODO: Add release build command
-    # Rust: cargo build --release {{args}}
+    MIX_ENV=prod mix compile {{args}}
 
 # Build and watch for changes
 build-watch:
-    @echo "Watching for changes..."
-    # TODO: Add watch command
-    # Rust: cargo watch -x build
-    # ReScript: npm run watch
+    @echo "No dedicated watch recipe configured; use 'iex -S mix' for interactive development."
 
 # Clean build artifacts [reversible: rebuild with `just build`]
 clean:
-    @echo "Cleaning..."
-    rm -rf target _build dist lib node_modules
+    mix clean
+    rm -rf _build deps doc coverage
 
 # Deep clean including caches [reversible: rebuild]
 clean-all: clean
@@ -89,22 +80,15 @@ clean-all: clean
 
 # Run all tests
 test *args:
-    @echo "Running tests..."
-    # TODO: Add test command
-    # Rust: cargo test {{args}}
-    # ReScript: npm test
-    # Elixir: mix test
+    mix test {{args}}
 
 # Run tests with verbose output
 test-verbose:
-    @echo "Running tests (verbose)..."
-    # TODO: Add verbose test
+    mix test --trace
 
 # Run tests and generate coverage report
 test-coverage:
-    @echo "Running tests with coverage..."
-    # TODO: Add coverage command
-    # Rust: cargo llvm-cov
+    mix test --cover
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # LINT & FORMAT
@@ -112,23 +96,15 @@ test-coverage:
 
 # Format all source files [reversible: git checkout]
 fmt:
-    @echo "Formatting..."
-    # TODO: Add format command
-    # Rust: cargo fmt
-    # ReScript: npm run format
-    # Elixir: mix format
+    mix format
 
 # Check formatting without changes
 fmt-check:
-    @echo "Checking format..."
-    # TODO: Add format check
-    # Rust: cargo fmt --check
+    mix format --check-formatted
 
 # Run linter
 lint:
-    @echo "Linting..."
-    # TODO: Add lint command
-    # Rust: cargo clippy -- -D warnings
+    mix compile --warnings-as-errors
 
 # Run all quality checks
 quality: fmt-check lint test
@@ -144,21 +120,15 @@ fix: fmt
 
 # Run the application
 run *args:
-    @echo "Running {{project}}..."
-    # TODO: Add run command
-    # Rust: cargo run {{args}}
+    mix run --no-halt {{args}}
 
 # Run in development mode with hot reload
 dev:
-    @echo "Starting dev mode..."
-    # TODO: Add dev command
+    iex -S mix
 
 # Run REPL/interactive mode
 repl:
-    @echo "Starting REPL..."
-    # TODO: Add REPL command
-    # Elixir: iex -S mix
-    # Guile: guix shell guile -- guile
+    iex -S mix
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DEPENDENCIES
@@ -166,17 +136,11 @@ repl:
 
 # Install all dependencies
 deps:
-    @echo "Installing dependencies..."
-    # TODO: Add deps command
-    # Rust: (automatic with cargo)
-    # ReScript: npm install
-    # Elixir: mix deps.get
+    mix deps.get
 
 # Audit dependencies for vulnerabilities
 deps-audit:
-    @echo "Auditing dependencies..."
-    # TODO: Add audit command
-    # Rust: cargo audit
+    mix hex.audit
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DOCUMENTATION
@@ -220,18 +184,18 @@ cookbook:
 man:
     #!/usr/bin/env bash
     mkdir -p docs/man
-    cat > docs/man/{{project}}.1 << EOF
-.TH RSR-TEMPLATE-REPO 1 "$(date +%Y-%m-%d)" "{{version}}" "RSR Template Manual"
-.SH NAME
-{{project}} \- RSR standard repository template
-.SH SYNOPSIS
-.B just
-[recipe] [args...]
-.SH DESCRIPTION
-Canonical template for RSR (Rhodium Standard Repository) projects.
-.SH AUTHOR
-Hyperpolymath <hyperpolymath@proton.me>
-EOF
+    printf '%s\n' \
+        '.TH HTTP-CAPABILITY-GATEWAY 1 "$(date +%Y-%m-%d)" "{{version}}" "HTTP Capability Gateway Manual"' \
+        '.SH NAME' \
+        '{{project}} \- policy-driven HTTP capability gateway' \
+        '.SH SYNOPSIS' \
+        '.B just' \
+        '[recipe] [args...]' \
+        '.SH DESCRIPTION' \
+        'Utility recipes for building, testing, and validating the HTTP capability gateway.' \
+        '.SH AUTHOR' \
+        'Hyperpolymath <hyperpolymath@proton.me>' \
+        > docs/man/{{project}}.1
     echo "Generated: docs/man/{{project}}.1"
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -288,11 +252,7 @@ ci: deps quality
 # Install git hooks
 install-hooks:
     @mkdir -p .git/hooks
-    @cat > .git/hooks/pre-commit << 'EOF'
-#!/bin/bash
-just fmt-check || exit 1
-just lint || exit 1
-EOF
+    @printf '%s\n' '#!/bin/bash' 'just fmt-check || exit 1' 'just lint || exit 1' > .git/hooks/pre-commit
     @chmod +x .git/hooks/pre-commit
     @echo "Git hooks installed"
 
@@ -348,7 +308,7 @@ validate-state:
     fi
 
 # Full validation suite
-validate: validate-rsr validate-state
+validate: fmt-check lint test validate-rsr validate-state
     @echo "All validations passed!"
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -2,74 +2,20 @@
 # Example Verb Governance Policy (DSL v1)
 # Development/Testing Configuration
 
-service:
-  name: "example-api"
-  version: 1
-  environment: "dev"
-
-# Global verb exposure levels (apply to all routes unless overridden)
-verbs:
-  GET:
-    exposure: "public"
-    narrative: "Read operations are publicly accessible"
-
-  POST:
-    exposure: "authenticated"
-    narrative: "Write operations require authentication"
-
-  PUT:
-    exposure: "authenticated"
-    narrative: "Update operations require authentication"
-
-  DELETE:
-    exposure: "internal"
-    narrative: "Delete operations are internal only"
-
-# Route-specific overrides
-routes:
-  # Public health check
-  - path: "^/health$"
-    verbs:
-      GET:
-        exposure: "public"
-        narrative: "Health check endpoint"
-
-  # Admin endpoints - internal only
-  - path: "^/admin/.*"
-    verbs:
-      GET:
-        exposure: "internal"
-      POST:
-        exposure: "internal"
-      DELETE:
-        exposure: "internal"
-
-  # User endpoints - authenticated
-  - path: "^/api/users/.*"
-    verbs:
-      GET:
-        exposure: "authenticated"
-      POST:
-        exposure: "authenticated"
-      PUT:
-        exposure: "authenticated"
-      DELETE:
-        exposure: "internal"
-        narrative: "User deletion requires internal access"
-
-# Stealth profiles for hiding capabilities
+dsl_version: "1"
+governance:
+  global_verbs:
+    - GET
+    - POST
+  routes:
+    - path: "^/health$"
+      verbs: [GET]
+    - path: "^/api/admin$"
+      verbs: [GET]
+    - path: "^/api/users/[0-9]+$"
+      verbs: [GET, PUT, DELETE]
+    - path: "^/api/posts/.+$"
+      verbs: [GET, POST]
 stealth:
-  default: "limited"
-  profiles:
-    limited:
-      unauthenticated: 405  # Method Not Allowed
-      untrusted: 404        # Not Found
-      authenticated: 404    # Not Found (for internal-only endpoints)
-
-# Narrative context
-narrative:
-  purpose: "Example policy demonstrating verb governance patterns"
-  assumptions:
-    - "Trust levels are provided via X-Trust-Level header"
-    - "Backend service handles authentication token validation"
-    - "Internal services use mTLS for trust establishment"
+  enabled: true
+  status_code: 404

@@ -1,5 +1,7 @@
 # http-capability-gateway - Implementation Roadmap
 
+> NOTE (2026-03-30): This document is historical. The repository now contains a real Mix application, Elixir modules, and tests. Use `ROADMAP.adoc`, `TEST-NEEDS.md`, and `PROOF-NEEDS.md` as the current source of truth. The main gap is verification and scope control, not initial scaffolding.
+
 **Created:** 2026-01-22
 **Current Status:** 30% (Design Phase)
 **Target:** MVP v0.1.0 (80-90%)

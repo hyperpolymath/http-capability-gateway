@@ -149,18 +149,12 @@ defmodule HttpCapabilityGateway.PolicyLoaderTest do
 
   describe "load_from_file/1" do
     test "loads policy from file" do
-      # Assuming example policy exists
-      policy_file = "priv/config/policy.dev.yaml"
+      policy_file = "examples/policy-dev.yaml"
 
-      case PolicyLoader.load_from_file(policy_file) do
-        {:ok, policy} ->
-          assert is_map(policy)
-          assert policy["dsl_version"] == "1"
-
-        {:error, _} ->
-          # File might not exist in test environment
-          assert true
-      end
+      assert {:ok, policy} = PolicyLoader.load_from_file(policy_file)
+      assert is_map(policy)
+      assert policy["dsl_version"] == "1"
+      assert policy["governance"]["global_verbs"] == ["GET", "POST"]
     end
 
     test "returns error for non-existent file" do

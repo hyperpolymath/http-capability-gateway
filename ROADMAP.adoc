@@ -1,22 +1,52 @@
 // SPDX-License-Identifier: PMPL-1.0-or-later
-= Rsr Template Repo Roadmap
+= HTTP Capability Gateway Roadmap
 
 == Current Status
 
-Initial development phase.
+The repository contains a real Elixir application, tests, and supporting docs, but the verification story still lags the implementation breadth.
+
+* The best near-term role for this project is a narrow API governance layer, not a universal front-door gateway.
+* `TEST-NEEDS.md` and `PROOF-NEEDS.md` define the real confidence gap more accurately than the old template roadmap did.
+* The main missing work is security depth, E2E proof, and scope discipline.
+
+== P0 Release Blockers
+
+* [ ] Reconcile contradictory status docs so the repo has one truthful current-state story.
+* [ ] Add real security tests for request sanitization, header handling, SSRF resistance, and capability-token validation.
+* [ ] Add end-to-end tests for request lifecycle, policy hot reload, and upstream proxy behavior.
+* [ ] Remove or replace `tests/fuzz/placeholder.txt`.
+* [ ] Define the supported MVP narrowly enough that it can be proven.
+
+== P1 Gateway Hardening
+
+* [ ] Benchmark routing, policy evaluation, and rate limiting.
+* [ ] Add concurrency and failure-mode tests for rate limiter, circuit breaker, and reload paths.
+* [ ] Tighten operator documentation around what protocols and trust sources are actually supported.
+* [ ] Keep the runtime role constrained to prefiltering before origin-side enforcement.
+
+== P2 Productization
+
+* [ ] Use the gateway in front of selected API routes first, not the whole application surface.
+* [ ] Add release criteria that require executed tests rather than topology percentages.
+* [ ] Mark older design-only documents as historical where they no longer reflect the codebase.
 
 == Milestones
 
-=== v0.1.0 - Foundation
-* [ ] Core functionality
-* [ ] Basic documentation
-* [ ] CI/CD pipeline
+=== v0.1.x - Narrow MVP
+* [ ] Truthful status docs
+* [ ] Request/path/verb governance solid
+* [ ] Capability checks and proxy path exercised end to end
+
+=== v0.2.x - Trusted Prefilter
+* [ ] Security and concurrency tests in place
+* [ ] Benchmarks documented
+* [ ] Route-scoped production guidance ready
 
 === v1.0.0 - Stable Release
-* [ ] Full feature set
-* [ ] Comprehensive tests
-* [ ] Production ready
+* [ ] Claims match executed evidence
+* [ ] Gateway role is intentionally narrow and well proven
+* [ ] Operators can deploy it without relying on design-document assumptions
 
 == Future Directions
 
-_To be determined based on community feedback._
+Broaden scope only after the narrow API-governance role is demonstrably trustworthy.
