@@ -1,0 +1,24 @@
+{
+  "applicability": [
+    "individual",
+    "team"
+  ],
+  "capabilities": {
+    "primary": {
+      "description": "TODO: describe this service's primary capability",
+      "endpoint": "/api",
+      "panel_compatible": true,
+      "protocol": "http",
+      "requires_auth": false,
+      "type": "custom"
+    }
+  },
+  "consumes": [
+    "octad-storage"
+  ],
+  "endpoints": {},
+  "groove_version": "1",
+  "health": "/health",
+  "service_id": "http_capability_gateway",
+  "service_version": "1.0.0"
+}
