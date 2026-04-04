@@ -7,6 +7,10 @@
 # to prevent cascading failures when backend services become unavailable.
 # The K9Contract module's :circuit_break breach policy delegates to this
 # module to trip circuits for degraded routes.
+#
+# VeriSimDB integration: circuit-open events are asynchronously appended to
+# the capgw:audit collection via HttpCapabilityGateway.VeriSimDB for forensic
+# replay and Hypatia pattern analysis.
 
 defmodule HttpCapabilityGateway.CircuitBreaker do
   @moduledoc """
@@ -574,6 +578,9 @@ defmodule HttpCapabilityGateway.CircuitBreaker do
             %{failure_count: new_count},
             %{backend: backend_name, threshold: config.failure_threshold}
           )
+
+          # Async audit: persist circuit-open event to VeriSimDB (capgw:audit)
+          HttpCapabilityGateway.VeriSimDB.audit_circuit_open(backend_name)
 
           # Schedule transition to half-open after the configured timeout.
           state = schedule_half_open(state, backend_name, config.half_open_after_ms)

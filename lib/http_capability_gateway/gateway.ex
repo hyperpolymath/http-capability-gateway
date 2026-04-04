@@ -44,6 +44,7 @@ defmodule HttpCapabilityGateway.Gateway do
   alias HttpCapabilityGateway.Proxy
   alias HttpCapabilityGateway.RateLimiter
   alias HttpCapabilityGateway.SafeTrust
+  alias HttpCapabilityGateway.VeriSimDB
 
   # Safe HTTP verb conversion with allowlist.
   #
@@ -335,6 +336,9 @@ defmodule HttpCapabilityGateway.Gateway do
                   duration_us = System.monotonic_time() - start_time
                   log_decision(request_id, path, verb, trust_level, :allow, rule, duration_us)
 
+                  # Async audit: persist allow decision to VeriSimDB (capgw:audit)
+                  VeriSimDB.audit_allow(path, verb, trust_level, rule.backend, rule.name, duration_us)
+
                   # K9-SVC contract enforcement: check if a service contract exists
                   # for this route+verb. If so, enforce pre-proxy constraints (trust
                   # threshold, contract-specific rate limit) before forwarding. After
@@ -345,6 +349,9 @@ defmodule HttpCapabilityGateway.Gateway do
                   # Access denied -- apply stealth profile if configured, otherwise 403
                   duration_us = System.monotonic_time() - start_time
                   log_decision(request_id, path, verb, trust_level, :deny, rule, duration_us)
+
+                  # Async audit: persist deny decision to VeriSimDB (capgw:audit)
+                  VeriSimDB.audit_deny(path, verb, trust_level, rule.name)
 
                   handle_denial(conn, rule, trust_level)
               end

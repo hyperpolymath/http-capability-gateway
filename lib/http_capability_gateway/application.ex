@@ -11,6 +11,7 @@ defmodule HttpCapabilityGateway.Application do
 
       HttpCapabilityGateway.Supervisor (one_for_one)
       ├── TelemetryMetricsPrometheus.Core  -- Prometheus metrics exporter
+      ├── HttpCapabilityGateway.VeriSimDB  -- Async audit log persistence (capgw:audit)
       ├── HttpCapabilityGateway.CircuitBreaker -- Backend circuit breaker FSM
       ├── HttpCapabilityGateway.Minikaran  -- Traffic shape anomaly detector
       └── Plug.Cowboy (Gateway)            -- HTTP server
@@ -24,7 +25,7 @@ defmodule HttpCapabilityGateway.Application do
   require Logger
 
   alias HttpCapabilityGateway.{PolicyLoader, PolicyValidator, PolicyCompiler, Logging}
-  alias HttpCapabilityGateway.{CircuitBreaker, Minikaran}
+  alias HttpCapabilityGateway.{CircuitBreaker, Minikaran, VeriSimDB}
 
   @impl true
   def start(_type, _args) do
@@ -40,6 +41,11 @@ defmodule HttpCapabilityGateway.Application do
         children = [
           # Prometheus metrics exporter
           {TelemetryMetricsPrometheus.Core, metrics: telemetry_metrics()},
+
+          # VeriSimDB async audit log client -- started early so that the
+          # ETS buffer table (:capgw_verisimdb_buffer) exists before the
+          # first request arrives. Writes are fire-and-forget casts.
+          {VeriSimDB, []},
 
           # Circuit breaker FSM -- started BEFORE Minikaran and the HTTP
           # server so its ETS table (:gateway_circuit_breaker) exists before
