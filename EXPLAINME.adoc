@@ -1,0 +1,160 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+= http-capability-gateway — Show Me The Receipts
+:toc:
+:icons: font
+
+The README makes claims. This file backs them up.
+
+== Verb Governance, Not a Proxy
+
+[quote, README]
+____
+http-capability-gateway is a lightweight, policy-driven HTTP governance layer
+that enforces a declarative, auditable model of HTTP verb exposure in front of
+existing services. It does not replace nginx or Apache. Instead, it governs
+what they are allowed to do.
+____
+
+The gateway is an Elixir OTP application sitting in front of an upstream proxy.
+Incoming requests hit `HttpCapabilityGateway.Gateway` which extracts the trust
+level from the `X-Trust-Level` header, delegates to `PolicyCompiler` for a
+rule lookup, and either forwards via `Proxy` or returns a stealth/error
+response. Nothing in `lib/` is a reverse proxy: there is no TLS termination,
+load balancing, or cache. The project's scope is strictly rule enforcement and
+audit logging.
+https://elixir-lang.org/docs.html[Elixir OTP]
+
+**Caveat:** There is no dynamic trust scoring, no control plane, and no
+Lithoglyph/Glyphbase integration yet — those are Phase 3 roadmap items. The
+Roadmap still uses the old term "FormBD" which has been superseded.
+
+- Implementation: `lib/http_capability_gateway/gateway.ex`
+- Upstream proxy: `lib/http_capability_gateway/proxy.ex`
+
+== Tiered ETS Policy Lookup
+
+[quote, README]
+____
+Tier 1 — Exact Path (O(1)): Literal route patterns are stored with
+{:exact, path, verb} ETS keys. A direct hash lookup resolves 90%+ of requests
+instantly. [...] For a 1000-route policy, this reduces from ~1000 regex
+evaluations per request to 1 hash lookup (typical case).
+____
+
+`PolicyCompiler` walks the loaded policy and splits routes into two ETS tables:
+exact paths (keyed `{:exact, path, verb}`) and regex patterns. On each request
+`Gateway` queries the exact table first (O(1) hash lookup), then the regex
+subset if unmatched, then the global fallback `{:global, verb}`. This is
+verifiable in `policy_compiler.ex` which calls `:ets.new/2` and populates with
+`:ets.insert/2`. Property tests in `test/policy_property_test.exs` exercise
+the lookup semantics across random policy shapes.
+https://www.erlang.org/doc/man/ets.html[Erlang ETS]
+
+**Caveat:** Regex compilation happens at policy load time, not per-request. A
+policy reload requires a process restart in v1; hot reload is a Phase 2 item.
+
+- Implementation: `lib/http_capability_gateway/policy_compiler.ex`
+- Tests: `test/policy_compiler_test.exs`, `test/policy_property_test.exs`
+
+== Policy Loader and Validator
+
+[quote, README]
+____
+The gateway loads a Verb Governance Spec (DSL v1), validates it, compiles it
+into fast enforcement rules, and applies those rules to real HTTP traffic.
+____
+
+`PolicyLoader` reads a YAML file from `config/policy.yaml`, deserialses it,
+and hands the map to `PolicyValidator` which checks required top-level keys
+(`service`, `verbs`), route shapes, and stealth profile references before
+compilation. A fixture policy lives in `test/fixtures/test-policy.yaml` and
+is exercised by `test/policy_loader_test.exs` and `test/policy_validator_test.exs`.
+
+**Caveat:** The DSL is YAML-only in v1. There is no JSON schema, no formal
+grammar, and no FQLdt proof of policy well-formedness yet (Phase 4 roadmap).
+
+- Implementation: `lib/http_capability_gateway/policy_loader.ex`, `policy_validator.ex`
+- Fixture: `test/fixtures/test-policy.yaml`
+- Tests: `test/policy_loader_test.exs`, `test/policy_validator_test.exs`
+
+== Structured Audit Logging
+
+[quote, README]
+____
+Every decision is logged in structured form for audit and introspection.
+____
+
+`LogFormatter` emits one JSON-structured log entry per enforcement decision,
+capturing the path, verb, resolved exposure level, trust level, and the outcome
+(`allow`/`deny`/`stealth`). `Logging` wraps Elixir's `:logger` and adds
+structured metadata. All responses also include OWASP-recommended security
+headers (`X-Content-Type-Options`, `X-Frame-Options`, `Cache-Control: no-store`).
+
+**Caveat:** Logs go to stdout/stderr in the current build. There is no
+persistent log store or streaming integration (Kafka, Loki, etc.) yet.
+
+- Implementation: `lib/http_capability_gateway/log_formatter.ex`, `logging.ex`
+
+== Multi-Protocol and GraphQL/gRPC Routing
+
+[quote, README.md]
+____
+The gateway supports multiple protocol routers beyond plain HTTP verb enforcement.
+____
+
+`ProtocolRouter` dispatches to specialised handlers: `GraphqlHandler` for
+GraphQL POST bodies and `GrpcHandler` for gRPC traffic, in addition to plain
+HTTP enforcement. `SafeTrust` provides the trust classification helper. This
+extension is documented further in `MULTI-PROTOCOL.md`.
+
+**Caveat:** GraphQL introspection and gRPC reflection are not restricted by
+default — explicit policy rules are required. Minikaran integration
+(`lib/http_capability_gateway/minikaran/`) is a skeleton.
+
+- Implementation: `lib/http_capability_gateway/protocol_router.ex`, `graphql_handler.ex`, `grpc_handler.ex`
+
+== Dogfooded Across The Account
+
+[cols="1,2"]
+|===
+| Technology | Also Used In
+
+| **Elixir / OTP** | https://github.com/hyperpolymath/phronesis (policy language runtime), https://github.com/hyperpolymath/burble (control plane)
+| **ETS lookup tables** | https://github.com/hyperpolymath/boj-server (cartridge dispatch)
+| **YAML policy DSL** | https://github.com/hyperpolymath/hypatia (rule definitions)
+| **OWASP security headers** | https://github.com/hyperpolymath/infrastructure-automation
+|===
+
+== File Map
+
+[cols="1,2"]
+|===
+| Path | Proves
+
+| `lib/http_capability_gateway/gateway.ex` | Core enforcement: trust extraction, rule lookup, allow/deny/stealth decision
+| `lib/http_capability_gateway/policy_loader.ex` | YAML policy file loading
+| `lib/http_capability_gateway/policy_validator.ex` | Schema validation of loaded policy
+| `lib/http_capability_gateway/policy_compiler.ex` | Compiles validated policy into ETS lookup tables
+| `lib/http_capability_gateway/proxy.ex` | Forward allowed requests to upstream
+| `lib/http_capability_gateway/log_formatter.ex` | Structured JSON audit log per decision
+| `lib/http_capability_gateway/logging.ex` | Logger wrapper with structured metadata
+| `lib/http_capability_gateway/protocol_router.ex` | Multi-protocol dispatch (HTTP, GraphQL, gRPC)
+| `lib/http_capability_gateway/graphql_handler.ex` | GraphQL-specific enforcement
+| `lib/http_capability_gateway/grpc_handler.ex` | gRPC-specific enforcement
+| `lib/http_capability_gateway/safe_trust.ex` | Trust level classification helper
+| `lib/http_capability_gateway/circuit_breaker.ex` | Circuit breaker for upstream calls
+| `lib/http_capability_gateway/rate_limiter.ex` | Rate limiting (Phase 2 scaffold)
+| `lib/http_capability_gateway/minikaran/` | Minikaran integration (skeleton)
+| `lib/http_capability_gateway/k9_contract.ex` | K9 contract declaration
+| `test/policy_compiler_test.exs` | Unit tests for ETS compilation
+| `test/policy_loader_test.exs` | Unit tests for YAML loading
+| `test/policy_validator_test.exs` | Unit tests for schema validation
+| `test/policy_property_test.exs` | Property-based tests for lookup correctness
+| `test/performance_test.exs` | Benchmarks for tiered ETS lookup
+| `test/gateway_test.exs` | Integration tests for full enforcement pipeline
+| `test/fixtures/test-policy.yaml` | Canonical test policy fixture
+| `config/policy.yaml` | Default runtime policy (user-supplied)
+| `MULTI-PROTOCOL.md` | GraphQL/gRPC routing documentation
+| `TOPOLOGY.md` | Deployment topology diagrams
+| `.machine_readable/` | A2ML state, meta, ecosystem files
+|===
