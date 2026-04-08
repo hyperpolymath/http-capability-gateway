@@ -50,13 +50,12 @@ pub export fn parse_grpc_request(
     // Minimum: 5-byte frame header
     if (length < 5) return null;
 
-    const header = @as(*const FrameHeader, @ptrCast(@alignCast(buffer)));
+    // Read header safely without pointer casts
+    const header_compressed = buffer[0];
+    const msg_length = std.mem.readInt(u32, buffer[1..5][0..4], .big);
 
     // Validate frame header
-    if (header.compressed != 0 and header.compressed != 1) return null;
-
-    // Convert length from network byte order (big-endian)
-    const msg_length = @byteSwap(header.length);
+    if (header_compressed != 0 and header_compressed != 1) return null;
 
     // Validate message fits in buffer
     if (5 + msg_length > length) return null;

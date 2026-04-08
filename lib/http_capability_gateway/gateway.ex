@@ -260,6 +260,7 @@ defmodule HttpCapabilityGateway.Gateway do
   def handle_request(conn) do
     start_time = System.monotonic_time()
     request_id = get_request_id(conn)
+    conn = Plug.Conn.assign(conn, :request_id, request_id)
 
     Logger.metadata(request_id: request_id)
 
@@ -285,6 +286,7 @@ defmodule HttpCapabilityGateway.Gateway do
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(405, Jason.encode!(%{error: "Method Not Allowed"}))
+        |> halt()
 
       verb ->
         # Valid HTTP method -- proceed with policy evaluation.
@@ -358,13 +360,23 @@ defmodule HttpCapabilityGateway.Gateway do
 
             {:error, :no_match} ->
               # No policy rule matches this path+verb combination -- default deny.
-              # Returns 404 to avoid leaking information about which paths exist.
               duration_us = System.monotonic_time() - start_time
               log_decision(request_id, path, verb, trust_level, :no_match, nil, duration_us)
 
-              conn
-              |> put_resp_content_type("application/json")
-              |> send_resp(404, Jason.encode!(%{error: "Resource not found"}))
+              stealth_profiles = Application.get_env(:http_capability_gateway, :stealth_profiles, %{})
+              stealth_enabled? = stealth_profiles != %{}
+
+              if stealth_enabled? do
+                status = get_in(stealth_profiles, ["default", to_string(trust_level)]) || 404
+                conn
+                |> send_resp(status, "")
+                |> halt()
+              else
+                conn
+                |> put_resp_content_type("application/json")
+                |> send_resp(403, Jason.encode!(%{error: "Forbidden"}))
+                |> halt()
+              end
           end
         end
     end
@@ -692,6 +704,7 @@ defmodule HttpCapabilityGateway.Gateway do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(status_code, Jason.encode!(response_body))
+    |> halt()
   end
 
   # Get stealth profile configuration from application environment

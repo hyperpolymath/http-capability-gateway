@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: PMPL-1.0-or-later
 defmodule HttpCapabilityGateway.PolicyLoaderTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   alias HttpCapabilityGateway.PolicyLoader
 
   describe "load_policy/1" do
@@ -41,7 +41,7 @@ defmodule HttpCapabilityGateway.PolicyLoaderTest do
 
     test "returns error for empty policy" do
       assert {:error, reason} = PolicyLoader.load_policy("")
-      assert reason =~ "empty"
+      assert reason =~ ~r/empty/i
     end
 
     test "handles policy with comments" do

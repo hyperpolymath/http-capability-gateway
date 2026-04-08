@@ -1,0 +1,547 @@
+{
+  "program_path": ".",
+  "language": "elixir",
+  "frameworks": [
+    "OTP",
+    "WebServer"
+  ],
+  "weak_points": [
+    {
+      "category": "AtomExhaustion",
+      "location": "test/policy_property_test.exs",
+      "severity": "High",
+      "description": "1 String.to_atom calls in test/policy_property_test.exs (use String.to_existing_atom)",
+      "recommended_attack": [
+        "memory"
+      ]
+    },
+    {
+      "category": "CommandInjection",
+      "location": "setup.sh",
+      "severity": "Medium",
+      "description": "42 potentially unquoted variable expansions in setup.sh",
+      "recommended_attack": [
+        "cpu"
+      ]
+    }
+  ],
+  "statistics": {
+    "total_lines": 9836,
+    "unsafe_blocks": 5,
+    "panic_sites": 0,
+    "unwrap_calls": 0,
+    "allocation_sites": 12,
+    "io_operations": 12,
+    "threading_constructs": 7
+  },
+  "file_statistics": [
+    {
+      "file_path": "ffi/zig/graphql/parser.zig",
+      "lines": 223,
+      "unsafe_blocks": 0,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 2,
+      "io_operations": 0,
+      "threading_constructs": 0
+    },
+    {
+      "file_path": "ffi/zig/grpc/parser.zig",
+      "lines": 206,
+      "unsafe_blocks": 0,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 2,
+      "io_operations": 0,
+      "threading_constructs": 0
+    },
+    {
+      "file_path": "lib/http_capability_gateway/application.ex",
+      "lines": 194,
+      "unsafe_blocks": 0,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 1,
+      "io_operations": 0,
+      "threading_constructs": 0
+    },
+    {
+      "file_path": "lib/http_capability_gateway/circuit_breaker.ex",
+      "lines": 739,
+      "unsafe_blocks": 0,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 1,
+      "io_operations": 0,
+      "threading_constructs": 1
+    },
+    {
+      "file_path": "lib/http_capability_gateway/graphql_handler.ex",
+      "lines": 182,
+      "unsafe_blocks": 0,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 0,
+      "io_operations": 1,
+      "threading_constructs": 0
+    },
+    {
+      "file_path": "lib/http_capability_gateway/k9_contract.ex",
+      "lines": 842,
+      "unsafe_blocks": 0,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 1,
+      "io_operations": 0,
+      "threading_constructs": 0
+    },
+    {
+      "file_path": "lib/http_capability_gateway/minikaran.ex",
+      "lines": 1015,
+      "unsafe_blocks": 0,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 1,
+      "io_operations": 0,
+      "threading_constructs": 1
+    },
+    {
+      "file_path": "lib/http_capability_gateway/policy_compiler.ex",
+      "lines": 448,
+      "unsafe_blocks": 0,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 2,
+      "io_operations": 0,
+      "threading_constructs": 0
+    },
+    {
+      "file_path": "lib/http_capability_gateway/policy_loader.ex",
+      "lines": 65,
+      "unsafe_blocks": 0,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 0,
+      "io_operations": 1,
+      "threading_constructs": 0
+    },
+    {
+      "file_path": "lib/http_capability_gateway/proxy.ex",
+      "lines": 210,
+      "unsafe_blocks": 0,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 0,
+      "io_operations": 4,
+      "threading_constructs": 0
+    },
+    {
+      "file_path": "lib/http_capability_gateway/rate_limiter.ex",
+      "lines": 330,
+      "unsafe_blocks": 0,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 1,
+      "io_operations": 0,
+      "threading_constructs": 0
+    },
+    {
+      "file_path": "lib/http_capability_gateway/verisimdb.ex",
+      "lines": 182,
+      "unsafe_blocks": 0,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 1,
+      "io_operations": 1,
+      "threading_constructs": 1
+    },
+    {
+      "file_path": "src/abi/Protocol.idr",
+      "lines": 190,
+      "unsafe_blocks": 4,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 0,
+      "io_operations": 0,
+      "threading_constructs": 0
+    },
+    {
+      "file_path": "src/abi/Types.idr",
+      "lines": 127,
+      "unsafe_blocks": 1,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 0,
+      "io_operations": 0,
+      "threading_constructs": 0
+    },
+    {
+      "file_path": "test/gateway_test.exs",
+      "lines": 312,
+      "unsafe_blocks": 0,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 0,
+      "io_operations": 0,
+      "threading_constructs": 1
+    },
+    {
+      "file_path": "test/performance_test.exs",
+      "lines": 256,
+      "unsafe_blocks": 0,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 0,
+      "io_operations": 0,
+      "threading_constructs": 3
+    },
+    {
+      "file_path": "setup.sh",
+      "lines": 278,
+      "unsafe_blocks": 0,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 0,
+      "io_operations": 3,
+      "threading_constructs": 0
+    },
+    {
+      "file_path": "flake.nix",
+      "lines": 116,
+      "unsafe_blocks": 0,
+      "panic_sites": 0,
+      "unwrap_calls": 0,
+      "allocation_sites": 0,
+      "io_operations": 2,
+      "threading_constructs": 0
+    }
+  ],
+  "recommended_attacks": [
+    "disk",
+    "memory",
+    "cpu",
+    "concurrency"
+  ],
+  "dependency_graph": {
+    "edges": [
+      {
+        "from": "setup.sh",
+        "to": "flake.nix",
+        "relation": "shared_dir:",
+        "weight": 1.0
+      },
+      {
+        "from": "test/gateway_test.exs",
+        "to": "test/performance_test.exs",
+        "relation": "shared_dir:test",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/application.ex",
+        "to": "lib/http_capability_gateway/circuit_breaker.ex",
+        "relation": "shared_dir:lib/http_capability_gateway",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/circuit_breaker.ex",
+        "to": "lib/http_capability_gateway/graphql_handler.ex",
+        "relation": "shared_dir:lib/http_capability_gateway",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/graphql_handler.ex",
+        "to": "lib/http_capability_gateway/k9_contract.ex",
+        "relation": "shared_dir:lib/http_capability_gateway",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/k9_contract.ex",
+        "to": "lib/http_capability_gateway/minikaran.ex",
+        "relation": "shared_dir:lib/http_capability_gateway",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/minikaran.ex",
+        "to": "lib/http_capability_gateway/policy_compiler.ex",
+        "relation": "shared_dir:lib/http_capability_gateway",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/policy_compiler.ex",
+        "to": "lib/http_capability_gateway/policy_loader.ex",
+        "relation": "shared_dir:lib/http_capability_gateway",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/policy_loader.ex",
+        "to": "lib/http_capability_gateway/proxy.ex",
+        "relation": "shared_dir:lib/http_capability_gateway",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/proxy.ex",
+        "to": "lib/http_capability_gateway/rate_limiter.ex",
+        "relation": "shared_dir:lib/http_capability_gateway",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/rate_limiter.ex",
+        "to": "lib/http_capability_gateway/verisimdb.ex",
+        "relation": "shared_dir:lib/http_capability_gateway",
+        "weight": 1.0
+      },
+      {
+        "from": "src/abi/Protocol.idr",
+        "to": "src/abi/Types.idr",
+        "relation": "shared_dir:src/abi",
+        "weight": 1.0
+      },
+      {
+        "from": "ffi/zig/graphql/parser.zig",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "ffi/zig/graphql/parser.zig",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "ffi/zig/grpc/parser.zig",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "ffi/zig/grpc/parser.zig",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/application.ex",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/application.ex",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/circuit_breaker.ex",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 2.0
+      },
+      {
+        "from": "lib/http_capability_gateway/circuit_breaker.ex",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 2.0
+      },
+      {
+        "from": "lib/http_capability_gateway/graphql_handler.ex",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/graphql_handler.ex",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/k9_contract.ex",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/k9_contract.ex",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/minikaran.ex",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 2.0
+      },
+      {
+        "from": "lib/http_capability_gateway/minikaran.ex",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 2.0
+      },
+      {
+        "from": "lib/http_capability_gateway/policy_compiler.ex",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/policy_compiler.ex",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/policy_loader.ex",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/policy_loader.ex",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/proxy.ex",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/proxy.ex",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/rate_limiter.ex",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/rate_limiter.ex",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "lib/http_capability_gateway/verisimdb.ex",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 2.0
+      },
+      {
+        "from": "lib/http_capability_gateway/verisimdb.ex",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 2.0
+      },
+      {
+        "from": "src/abi/Protocol.idr",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 12.0
+      },
+      {
+        "from": "src/abi/Protocol.idr",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 12.0
+      },
+      {
+        "from": "src/abi/Types.idr",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 3.0
+      },
+      {
+        "from": "src/abi/Types.idr",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 3.0
+      },
+      {
+        "from": "test/gateway_test.exs",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 2.0
+      },
+      {
+        "from": "test/gateway_test.exs",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 2.0
+      },
+      {
+        "from": "test/performance_test.exs",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 6.0
+      },
+      {
+        "from": "test/performance_test.exs",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 6.0
+      },
+      {
+        "from": "setup.sh",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "setup.sh",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "flake.nix",
+        "to": "OTP",
+        "relation": "framework",
+        "weight": 1.0
+      },
+      {
+        "from": "flake.nix",
+        "to": "WebServer",
+        "relation": "framework",
+        "weight": 1.0
+      }
+    ]
+  },
+  "taint_matrix": {
+    "rows": [
+      {
+        "source_category": "AtomExhaustion",
+        "sink_axis": "memory",
+        "severity_value": 3.5,
+        "files": [
+          "test/policy_property_test.exs"
+        ],
+        "frameworks": [
+          "OTP",
+          "WebServer"
+        ],
+        "relation": "AtomExhaustion->Memory"
+      },
+      {
+        "source_category": "CommandInjection",
+        "sink_axis": "cpu",
+        "severity_value": 2.5,
+        "files": [
+          "setup.sh"
+        ],
+        "frameworks": [
+          "OTP",
+          "WebServer"
+        ],
+        "relation": "CommandInjection->Cpu"
+      }
+    ]
+  }
+}

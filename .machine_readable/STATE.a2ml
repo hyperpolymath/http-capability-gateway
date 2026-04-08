@@ -1,0 +1,16 @@
+;; STATE.a2ml - RSR State File
+;; SPDX-License-Identifier: PMPL-1.0-or-later
+;; Copyright (C) 2026 Jonathan D.A. Jewell
+;;
+;; This file tracks the current state of the project using S-expressions.
+
+(state
+  (version . "0.1.0")
+  (phase . "In development")
+  (updated . "2026-03-15")
+  (status . "active")
+
+  (project
+    (name . "http-capability-gateway")
+    (completion . 0))
+)

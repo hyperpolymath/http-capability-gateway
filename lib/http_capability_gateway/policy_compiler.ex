@@ -42,8 +42,10 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
       :verb,            # Atom: :GET, :POST, :PUT, :DELETE, :PATCH, :HEAD, :OPTIONS
       :exposure,        # "public", "authenticated", or "internal"
       :stealth_profile, # String profile name or nil
-      :narrative        # Optional explanation string
-    ]
+      :narrative,       # Optional explanation string
+      :backend,         # Target backend URL
+      :name             # Unique rule name
+      ]
 
     @type t :: %__MODULE__{
             path_pattern: String.t(),
@@ -137,24 +139,31 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
           service: service_name
         )
 
-        # Atomic swap: update BOTH application env references, then delete
-        # both old tables. The order matters -- update references BEFORE
-        # deleting old tables to avoid any gap where no table exists.
-        old_main = Application.get_env(:http_capability_gateway, :policy_table)
-        old_regex = Application.get_env(:http_capability_gateway, :policy_regex_table)
+        atomic_swap = Keyword.get(opts, :atomic_swap, true)
+        delete_old = Keyword.get(opts, :delete_old, true)
 
-        Application.put_env(:http_capability_gateway, :policy_table, temp_main_name)
-        Application.put_env(:http_capability_gateway, :policy_regex_table, temp_regex_name)
+        if atomic_swap do
+          # Atomic swap: update BOTH application env references, then delete
+          # both old tables. The order matters -- update references BEFORE
+          # deleting old tables to avoid any gap where no table exists.
+          old_main = Application.get_env(:http_capability_gateway, :policy_table)
+          old_regex = Application.get_env(:http_capability_gateway, :policy_regex_table)
 
-        # Delete old tables only if they exist and are still registered.
-        if old_main && :ets.whereis(old_main) != :undefined do
-          Logger.debug("Deleting old main policy table", table: old_main)
-          :ets.delete(old_main)
-        end
+          Application.put_env(:http_capability_gateway, :policy_table, temp_main_name)
+          Application.put_env(:http_capability_gateway, :policy_regex_table, temp_regex_name)
 
-        if old_regex && :ets.whereis(old_regex) != :undefined do
-          Logger.debug("Deleting old regex policy table", table: old_regex)
-          :ets.delete(old_regex)
+          if delete_old do
+            # Delete old tables only if they exist and are still registered.
+            if old_main && :ets.whereis(old_main) != :undefined do
+              Logger.debug("Deleting old main policy table", table: old_main)
+              :ets.delete(old_main)
+            end
+
+            if old_regex && :ets.whereis(old_regex) != :undefined do
+              Logger.debug("Deleting old regex policy table", table: old_regex)
+              :ets.delete(old_regex)
+            end
+          end
         end
 
         {:ok, temp_main_name}
@@ -292,7 +301,9 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
           verb: verb_atom,
           exposure: "public",  # Default for global verbs
           stealth_profile: get_stealth_enabled(policy),
-          narrative: nil
+          narrative: nil,
+          backend: Map.get(policy["governance"], "global_backend"),
+          name: "global_#{verb_str}"
         }
 
         # Use verb atom as part of key for global rules
@@ -340,9 +351,11 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
                 path_pattern: path_pattern,
                 path_regex: path_regex,
                 verb: verb_atom,
-                exposure: "public",  # DSL v1 doesn't specify exposure per-route
-                stealth_profile: get_stealth_enabled(policy),
-                narrative: nil
+                exposure: Map.get(route, "exposure", "public"),
+                stealth_profile: Map.get(route, "stealth_profile"),
+                narrative: Map.get(route, "narrative"),
+                backend: Map.get(route, "backend"),
+                name: Map.get(route, "name", "route_#{path_pattern}_#{verb_str}")
               }
 
               if is_literal do
