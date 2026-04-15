@@ -16,6 +16,8 @@ set dotenv-load := true
 set positional-arguments := true
 
 # Project metadata
+import? "contractile.just"
+
 project := "http-capability-gateway"
 version := "1.0.0"
 tier := "infrastructure"  # 1 | 2 | infrastructure
