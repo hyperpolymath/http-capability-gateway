@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
 
-# Deployment Guide — HTTP Capability Gateway v1.0.0
+# Deployment Guide — HTTP Capability Gateway v0.1.0-dev
 
 Practical guide for deploying the HTTP Capability Gateway to production environments.
 Covers container-based deployment (Podman/Docker), bare-metal OTP releases, policy
@@ -55,10 +55,10 @@ Alpine-based runtime image (~30 MB) with no build tools or source code.
 
 ```bash
 # Build with Podman (preferred)
-podman build -t http-capability-gateway:1.0.0 -f Containerfile .
+podman build -t http-capability-gateway:0.1.0-dev -f Containerfile .
 
 # Build with Docker
-docker build -t http-capability-gateway:1.0.0 -f Containerfile .
+docker build -t http-capability-gateway:0.1.0-dev -f Containerfile .
 ```
 
 The builder stage uses `hexpm/elixir:1.19.4-erlang-28.2.2-alpine-3.22.1`.
@@ -76,7 +76,7 @@ podman run -d \
   -e BACKEND_URL=http://backend:4000 \
   -e PORT=4000 \
   -v ./my-policy.yaml:/app/config/policy.yaml:ro \
-  http-capability-gateway:1.0.0
+  http-capability-gateway:0.1.0-dev
 
 # Check logs
 podman logs -f http-capability-gateway
@@ -178,7 +178,7 @@ Create `/etc/systemd/system/http-capability-gateway.service`:
 
 ```ini
 [Unit]
-Description=HTTP Capability Gateway v1.0.0
+Description=HTTP Capability Gateway v0.1.0-dev
 Documentation=https://github.com/hyperpolymath/http-capability-gateway
 After=network.target
 
@@ -327,7 +327,7 @@ curl -s http://localhost:4000/health | jq .
 {
   "status": "healthy",
   "service": "http-capability-gateway",
-  "version": "1.0.0",
+  "version": "0.1.0-dev",
   "uptime_seconds": 3600
 }
 ```

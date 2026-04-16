@@ -1,6 +1,17 @@
 # Multi-Protocol API Gateway
 
-The HTTP Capability Gateway now supports multiple protocols: HTTP/REST, gRPC, and GraphQL.
+> **⚠️ SCOPE NOTICE (2026-04-16):** This document describes the vision for
+> multi-protocol support. Today, only **HTTP/REST** is production-ready. gRPC
+> and GraphQL handlers exist but are **stubs**: `GraphQLHandler.check_operation_policy/2`
+> always returns true, and `GRPCHandler.forward_grpc_request/5` returns a
+> hardcoded response with no actual forwarding. Do not route gRPC or GraphQL
+> traffic through this gateway in production.
+>
+> See `docs/SUPPORTED-FEATURES.md` for the authoritative status of each
+> protocol, and `ROADMAP.adoc` for the MVP scope.
+
+The HTTP Capability Gateway aims to support multiple protocols: HTTP/REST, gRPC, and GraphQL.
+Only HTTP/REST is currently supported end-to-end.
 
 ## Architecture
 
