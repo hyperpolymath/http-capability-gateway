@@ -115,16 +115,24 @@ defmodule HttpCapabilityGateway.GraphQLHandler do
   # Check if GraphQL operation is allowed
   # Integrates with PolicyCompiler - GraphQL uses /graphql path
   defp graphql_operation_allowed?(operation_type) do
-    # GraphQL operations are POST to /graphql
-    # We could extend policy to include operation type restrictions
-    case PolicyCompiler.lookup(:policy_rules, "/graphql", :POST) do
-      {:ok, rule} ->
-        # Additional check: some policies might restrict specific operations
-        # For now, just check if /graphql endpoint is allowed
-        check_operation_policy(rule, operation_type)
+    # Read the current policy table from application env so that this
+    # handler stays correct after atomic policy reloads (see PolicyCompiler).
+    # Hardcoding :policy_rules would miss the freshly-compiled table that
+    # the atomic swap pattern publishes under a monotonic-time-suffixed name.
+    policy_table = Application.get_env(:http_capability_gateway, :policy_table)
 
-      {:error, :no_match} ->
-        false
+    if is_nil(policy_table) do
+      false
+    else
+      # GraphQL operations are POST to /graphql
+      case PolicyCompiler.lookup(policy_table, "/graphql", :POST) do
+        {:ok, rule} ->
+          # Additional check: some policies might restrict specific operations
+          check_operation_policy(rule, operation_type)
+
+        {:error, :no_match} ->
+          false
+      end
     end
   end
 

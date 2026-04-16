@@ -103,11 +103,20 @@ defmodule HttpCapabilityGateway.GRPCHandler do
     # Build gRPC path in format /Service/Method
     path = "/#{service}/#{method}"
 
-    # Check against policy rules
-    # gRPC methods are treated as POST requests in the policy
-    case PolicyCompiler.lookup(:policy_rules, path, :POST) do
-      {:ok, _rule} -> true
-      {:error, :no_match} -> false
+    # Read the current policy table from application env so this handler
+    # stays correct after atomic policy reloads (see PolicyCompiler).
+    # Hardcoding :policy_rules would miss tables created by the atomic
+    # swap pattern (which uses monotonic-time-suffixed names).
+    policy_table = Application.get_env(:http_capability_gateway, :policy_table)
+
+    if is_nil(policy_table) do
+      false
+    else
+      # gRPC methods are treated as POST requests in the policy
+      case PolicyCompiler.lookup(policy_table, path, :POST) do
+        {:ok, _rule} -> true
+        {:error, :no_match} -> false
+      end
     end
   end
 
