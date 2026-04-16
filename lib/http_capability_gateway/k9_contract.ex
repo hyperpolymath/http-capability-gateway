@@ -375,7 +375,34 @@ defmodule HttpCapabilityGateway.K9Contract do
     threshold_as_exposure = trust_to_exposure(contract.trust_threshold)
 
     if SafeTrust.satisfies?(trust_level, threshold_as_exposure) do
-      :ok
+      # Trust check passed — now check the contract-specific rate limit.
+      # This is separate from the global RateLimiter (which limits by IP+trust);
+      # the contract rate limit enforces per-contract capacity guarantees
+      # (e.g., "this route can accept at most 100 req/s total across all clients").
+      case check_contract_rate_limit(contract) do
+        :ok ->
+          :ok
+
+        {:error, :contract_rate_limited} = err ->
+          Logger.info("K9 contract rate limit exceeded",
+            contract_id: contract.contract_id,
+            service: contract.service,
+            route: contract.route_pattern,
+            rate_limit: contract.rate_limit
+          )
+
+          :telemetry.execute(
+            [:http_capability_gateway, :k9_contract, :rate_limited],
+            %{count: 1, rate_limit: contract.rate_limit},
+            %{
+              contract_id: contract.contract_id,
+              service: contract.service,
+              route: contract.route_pattern
+            }
+          )
+
+          err
+      end
     else
       Logger.info("K9 contract trust check failed",
         contract_id: contract.contract_id,
@@ -386,6 +413,54 @@ defmodule HttpCapabilityGateway.K9Contract do
       {:error, :trust_insufficient}
     end
   end
+
+  # Check the contract's per-route rate limit using a token bucket stored
+  # in the same ETS table keyed by {:contract_bucket, route_pattern, verb}.
+  #
+  # This implements the same token bucket algorithm as
+  # HttpCapabilityGateway.RateLimiter, but scoped to a SINGLE contract rather
+  # than per-client. The capacity equals `contract.rate_limit` (interpreted
+  # as both requests-per-second and burst capacity).
+  #
+  # The check-and-consume is not strictly atomic (same tradeoff as
+  # RateLimiter); under high contention a few extra requests may slip
+  # through, which is acceptable for contract-level capacity.
+  @spec check_contract_rate_limit(t()) :: :ok | {:error, :contract_rate_limited}
+  defp check_contract_rate_limit(%__MODULE__{rate_limit: rate_limit} = contract)
+       when is_integer(rate_limit) and rate_limit > 0 do
+    if :ets.whereis(@ets_table) == :undefined do
+      # No table — fail open (contract cannot enforce without state).
+      :ok
+    else
+      # We use a 2-tuple {bucket_key, {tokens, refill_time}} to match the
+      # existing {key, value} convention of this ETS table. This keeps
+      # :ets.tab2list consumers working when they pattern-match {_key, _}.
+      bucket_key = {:contract_bucket, contract.route_pattern, contract.verb}
+      now = System.monotonic_time(:nanosecond)
+      capacity = rate_limit * 1.0
+
+      {current_tokens, last_refill} =
+        case :ets.lookup(@ets_table, bucket_key) do
+          [{^bucket_key, {tokens, refill_time}}] -> {tokens, refill_time}
+          [] -> {capacity, now}
+        end
+
+      elapsed_sec = max(now - last_refill, 0) / 1_000_000_000
+      new_tokens = min(current_tokens + elapsed_sec * rate_limit, capacity)
+
+      if new_tokens >= 1.0 do
+        :ets.insert(@ets_table, {bucket_key, {new_tokens - 1.0, now}})
+        :ok
+      else
+        # Update timestamp so partial refill accumulates.
+        :ets.insert(@ets_table, {bucket_key, {new_tokens, now}})
+        {:error, :contract_rate_limited}
+      end
+    end
+  end
+
+  # Contracts without a positive rate_limit skip rate enforcement.
+  defp check_contract_rate_limit(_contract), do: :ok
 
   @doc """
   Enforce a K9-SVC contract's post-proxy constraints and handle breaches.
@@ -556,7 +631,14 @@ defmodule HttpCapabilityGateway.K9Contract do
   @spec count() :: non_neg_integer()
   def count do
     if :ets.whereis(@ets_table) != :undefined do
-      :ets.info(@ets_table, :size)
+      # The ETS table stores multiple entry kinds keyed by a leading tag atom:
+      #   {:contract, ...}         — registered contract structs
+      #   {:breach_count, ...}     — per-route breach counters
+      #   {:contract_bucket, ...}  — per-contract rate-limiter buckets
+      # Only contract entries are what callers want when they ask for "count".
+      @ets_table
+      |> :ets.match_object({{:contract, :_, :_}, :_})
+      |> length()
     else
       0
     end
@@ -575,8 +657,10 @@ defmodule HttpCapabilityGateway.K9Contract do
   @spec list_all() :: [t()]
   def list_all do
     if :ets.whereis(@ets_table) != :undefined do
+      # Filter by key pattern {:contract, _, _} so we ignore :breach_count
+      # entries (counters) and :contract_bucket entries (rate-limit state).
       @ets_table
-      |> :ets.tab2list()
+      |> :ets.match_object({{:contract, :_, :_}, :_})
       |> Enum.map(fn {_key, contract} -> contract end)
     else
       []
@@ -666,8 +750,12 @@ defmodule HttpCapabilityGateway.K9Contract do
   @spec find_wildcard_match(String.t(), atom()) :: t() | nil
   defp find_wildcard_match(path, verb) do
     if :ets.whereis(@ets_table) != :undefined do
+      # Use :ets.match_object with the {:contract, _, _} pattern so we only
+      # iterate contract entries, skipping :breach_count and :contract_bucket
+      # entries that share the same table. Without this filter the Enum.find_value
+      # callback would FunctionClauseError on the first non-contract row.
       @ets_table
-      |> :ets.tab2list()
+      |> :ets.match_object({{:contract, :_, :_}, :_})
       |> Enum.find_value(fn
         {{:contract, pattern, contract_verb}, contract} ->
           if wildcard_matches?(pattern, path) and (contract_verb == verb or contract_verb == :ANY) do

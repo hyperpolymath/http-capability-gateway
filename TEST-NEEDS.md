@@ -2,59 +2,63 @@
 
 ## CRG Grade: C — ACHIEVED 2026-04-04
 
-> Generated 2026-03-29 by punishing audit.
+> Generated 2026-03-29 by punishing audit. Superseded 2026-04-16 by the
+> P0/P1/P2 test work documented below.
 
 ## Current State (updated 2026-04-16)
 
 | Category     | Count | Notes |
 |-------------|-------|-------|
-| Unit tests   | 7     | gateway, policy_compiler, policy_loader, policy_validator, policy_property, performance, http_capability_gateway |
+| Unit tests   | 9     | gateway, policy_compiler, policy_loader, policy_validator, policy_property, performance, http_capability_gateway, **circuit_breaker**, **k9_contract** |
 | Security     | 1     | security_test.exs: sanitization, headers, SSRF, capability tokens (30+ tests) |
 | E2E          | 1     | e2e_test.exs: full lifecycle, policy hot-reload, upstream proxy, health probes (20+ tests) |
+| Concurrency  | 1     | concurrency_test.exs: rate limiter contention, circuit breaker serialization, atomic reload under load |
 | Fuzz         | 1     | fuzz_test.exs: property-based fuzzing with StreamData (6 properties) |
-| Benchmarks   | 0     | None |
+| Benchmarks   | 2     | performance_test.exs (existing) + benchmark_test.exs (rate limiter / circuit breaker / route lookup) |
 
-**Source modules:** ~19 Elixir modules (gateway, circuit_breaker, proxy, rate_limiter, safe_trust, graphql_handler, grpc_handler, policy_*, minikaran, logging, etc.) + 2 Idris2 ABI + 4 Zig FFI.
+**Source modules:** ~19 Elixir modules + 2 Idris2 ABI + 2 Zig FFI parsers.
 
-## What's Missing
+## Coverage Summary
 
-### P2P (Property-Based) Tests
-- [ ] Policy compilation: fuzz arbitrary YAML policies through compiler
-- [ ] Rate limiter: property tests for token bucket invariants
-- [ ] Circuit breaker: state machine property tests (closed->open->half-open)
-- [ ] GraphQL/gRPC handler: arbitrary request shape handling
+### ✅ Covered
 
-### E2E Tests
-- [ ] Full request lifecycle: client -> gateway -> upstream -> response
-- [ ] Multi-protocol routing (HTTP, GraphQL, gRPC through single gateway)
-- [ ] Policy hot-reload under load
-- [ ] Health check / readiness probe validation
+- **P2P (Property-Based) Tests**
+  - Policy compilation: arbitrary YAML through compiler (`test/fuzz_test.exs`)
+  - Circuit breaker: state machine transitions (`test/circuit_breaker_test.exs`)
+  - Rate limiter: token bucket under contention (`test/concurrency_test.exs`)
 
-### Aspect Tests
-- **Security:** Request sanitization, header injection, SSRF prevention, capability token validation — covered in `test/security_test.exs`
-- **Performance:** No load tests, no latency benchmarks, no throughput measurement
-- **Concurrency:** No tests for concurrent connections, race conditions in rate limiter, circuit breaker under contention
-- **Error handling:** No tests for upstream timeout, malformed requests, policy parse failures
+- **E2E Tests**
+  - Full request lifecycle (`test/e2e_test.exs`)
+  - Policy hot-reload under load (`test/concurrency_test.exs`)
+  - Health check / readiness probe validation (`test/e2e_test.exs`)
 
-### Build & Execution
-- [ ] `mix test` runner verification
-- [ ] Zig FFI integration test execution
-- [ ] Container build + smoke test
+- **Aspect Tests**
+  - **Security:** Request sanitization, header injection, SSRF prevention, capability token validation (`test/security_test.exs`)
+  - **Concurrency:** Rate limiter and circuit breaker under contention (`test/concurrency_test.exs`)
+  - **Performance:** Rate limiter, circuit breaker, route lookup benchmarks (`test/benchmark_test.exs`)
 
-### Benchmarks Needed
-- [ ] Request routing latency (per-protocol)
-- [ ] Policy evaluation overhead
-- [ ] Rate limiter throughput
-- [ ] Circuit breaker state transition cost
+- **Benchmarks**
+  - Rate limiter throughput (`test/benchmark_test.exs`)
+  - Circuit breaker state transition cost (`test/benchmark_test.exs`)
+  - Exact vs regex vs global-fallback route lookup (`test/benchmark_test.exs`)
+  - Policy evaluation overhead (`test/performance_test.exs`)
+  - Full plug pipeline throughput (`test/benchmark_test.exs`)
 
-### Self-Tests
-- [ ] Configuration validation on startup
-- [ ] Policy schema self-check
-- [ ] Capability token format verification
+### ⚠️ Still Missing
+
+- **Multi-protocol routing tests** — GraphQL/gRPC handlers are stubs per `docs/SUPPORTED-FEATURES.md`, so this is out of MVP scope rather than "missing".
+- **Zig FFI integration test execution** — requires zig toolchain; covered by separate FFI build step.
+- **Container build smoke test** — performed in CI, not in `mix test`.
+- **Error handling: upstream timeout** — Req receive_timeout covered implicitly; no dedicated test.
+- **Real-CA mTLS integration test** — code uses `Record.extract` accessors but no live cert in test fixtures.
+- **Self-tests for config validation on startup** — Application.start refuses without policy, but no dedicated assertion.
 
 ## Priority
 
-**CRITICAL.** 19 modules with 7 unit tests = 37% coverage by file count. A security gateway with ZERO security tests is a contradiction. No benchmarks for a performance-sensitive proxy is unacceptable. No concurrency tests for a concurrent system is negligent.
+Originally **CRITICAL** when only 7 unit tests covered 19 modules.
+Now: the release gate in `docs/RELEASE-CRITERIA.md` maps every MVP claim
+to a concrete test file. Remaining items are clearly marked above and
+are not release blockers for v0.1.0.
 
 ## FUZZ STATUS
 
