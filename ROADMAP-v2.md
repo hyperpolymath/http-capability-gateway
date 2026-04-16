@@ -1,7 +1,17 @@
-# http-capability-gateway v2.0 Roadmap
-# Making It Irresistible
+# http-capability-gateway v2.0 Roadmap — HISTORICAL / ASPIRATIONAL
 
-## Vision: The Gateway Everyone Wants
+> **⚠️ HISTORICAL DOCUMENT (2026-04-16):** This is an aspirational v2.0 vision
+> written when the project was still in design phase. It is NOT on the current
+> release path for v0.1.0 — the features listed here (web UI, plugins, multi-protocol
+> full support, AI policy suggestions, etc.) are explicitly **out of MVP scope**.
+>
+> See `ROADMAP.adoc` and `docs/SUPPORTED-FEATURES.md` for the current scope and
+> what is actually supported today.
+>
+> Do not treat any item in this document as a commitment or an imminent feature.
+> It is preserved for reference and long-term direction only.
+
+# Original Vision: The Gateway Everyone Wants
 
 Transform http-capability-gateway from "good production gateway" to **"the obvious choice for API governance"** by making it:
 

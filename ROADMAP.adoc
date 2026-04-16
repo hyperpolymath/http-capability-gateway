@@ -75,16 +75,16 @@ Each claim above must have at least one passing test:
 
 == P1 Gateway Hardening
 
-* [ ] Benchmark routing, policy evaluation, and rate limiting.
-* [ ] Add concurrency and failure-mode tests for rate limiter, circuit breaker, and reload paths.
-* [ ] Tighten operator documentation around what protocols and trust sources are actually supported.
-* [ ] Keep the runtime role constrained to prefiltering before origin-side enforcement.
+* [x] Benchmark routing, policy evaluation, and rate limiting. `test/benchmark_test.exs`.
+* [x] Add concurrency and failure-mode tests for rate limiter, circuit breaker, and reload paths. `test/concurrency_test.exs`.
+* [x] Tighten operator documentation around what protocols and trust sources are actually supported. `docs/SUPPORTED-FEATURES.md`.
+* [x] Keep the runtime role constrained to prefiltering before origin-side enforcement. `docs/SCOPED-DEPLOYMENT.md`.
 
 == P2 Productization
 
-* [ ] Use the gateway in front of selected API routes first, not the whole application surface.
-* [ ] Add release criteria that require executed tests rather than topology percentages.
-* [ ] Mark older design-only documents as historical where they no longer reflect the codebase.
+* [x] Use the gateway in front of selected API routes first, not the whole application surface. See `docs/SCOPED-DEPLOYMENT.md`.
+* [x] Add release criteria that require executed tests rather than topology percentages. See `docs/RELEASE-CRITERIA.md`.
+* [x] Mark older design-only documents as historical where they no longer reflect the codebase. `ROADMAP-v2.md`, `IMPLEMENTATION-ROADMAP.md`, `TOPOLOGY.md` updated.
 
 == Milestones
 

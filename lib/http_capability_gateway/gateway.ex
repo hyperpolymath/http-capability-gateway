@@ -36,6 +36,7 @@ defmodule HttpCapabilityGateway.Gateway do
 
   use Plug.Router
   require Logger
+  require Record
 
   alias HttpCapabilityGateway.CircuitBreaker
   alias HttpCapabilityGateway.K9Contract
@@ -45,6 +46,29 @@ defmodule HttpCapabilityGateway.Gateway do
   alias HttpCapabilityGateway.RateLimiter
   alias HttpCapabilityGateway.SafeTrust
   alias HttpCapabilityGateway.VeriSimDB
+
+  # Erlang OTPCertificate / OTPTBSCertificate record accessors.
+  #
+  # When :public_key.pkix_decode_cert/2 is called with :otp, it returns an
+  # OTPCertificate record (which in Elixir is an erlang-record tuple). The
+  # record definitions live in OTP's public_key application header file.
+  # Record.extract pulls the CURRENT definitions at compile time, so the
+  # field accessors stay correct across OTP versions even if the record
+  # layout is extended.
+  #
+  # Defined as private (defrecordp) because they're an implementation detail
+  # of extract_cert_subject/1 and should never leak outside this module.
+  Record.defrecordp(
+    :otp_certificate,
+    :OTPCertificate,
+    Record.extract(:OTPCertificate, from_lib: "public_key/include/OTP-PUB-KEY.hrl")
+  )
+
+  Record.defrecordp(
+    :otp_tbs_certificate,
+    :OTPTBSCertificate,
+    Record.extract(:OTPTBSCertificate, from_lib: "public_key/include/OTP-PUB-KEY.hrl")
+  )
 
   # Safe HTTP verb conversion with allowlist.
   #
@@ -481,6 +505,22 @@ defmodule HttpCapabilityGateway.Gateway do
               message: "K9-SVC contract requires #{contract.trust_threshold} trust level",
               contract_id: contract.contract_id
             }))
+
+          {:error, :contract_rate_limited} ->
+            # Contract-specific rate limit exceeded — deny with 429 and a
+            # Retry-After hint of 1 second (the shortest meaningful window
+            # for a per-second token bucket). The global RateLimiter runs
+            # earlier in the pipeline; this catches contract-level capacity
+            # limits that apply across all clients of a specific route.
+            conn
+            |> put_resp_header("retry-after", "1")
+            |> put_resp_content_type("application/json")
+            |> send_resp(429, Jason.encode!(%{
+              error: "Too Many Requests",
+              message: "K9-SVC contract rate limit exceeded",
+              contract_id: contract.contract_id,
+              rate_limit: contract.rate_limit
+            }))
         end
     end
   end
@@ -548,47 +588,36 @@ defmodule HttpCapabilityGateway.Gateway do
     end
   end
 
-  # Extract subject fields from X.509 certificate
+  # Extract subject fields from an X.509 certificate (DER-encoded).
+  #
+  # Uses :public_key.pkix_decode_cert/2 in :otp mode, which returns an
+  # OTPCertificate record. The subject is nested inside the TBSCertificate:
+  #
+  #   #'OTPCertificate'{
+  #     tbsCertificate: #'OTPTBSCertificate'{
+  #       subject: {:rdnSequence, [...]}
+  #     }
+  #   }
+  #
+  # We use Record.extract accessors (defined at the top of this module) to
+  # pull the subject field robustly, instead of a positional tuple match
+  # that would break if OTP ever extends the record layout. This is the
+  # production-grade replacement for the earlier approximation that matched
+  # on {:Certificate, _, subject, _, _, _, _}.
   defp extract_cert_subject(cert_der) when is_binary(cert_der) do
     try do
-      # Decode DER-encoded certificate
       cert = :public_key.pkix_decode_cert(cert_der, :otp)
 
-      # Extract subject from the decoded certificate.
-      #
-      # IMPORTANT: This pattern match is a simplified approximation.
-      # When :public_key.pkix_decode_cert/2 is called with :otp, it returns
-      # an OTPCertificate record, NOT a raw {:Certificate, ...} tuple.
-      # The OTP certificate structure nests the subject inside:
-      #
-      #   #'OTPCertificate'{
-      #     tbsCertificate: #'OTPTBSCertificate'{
-      #       subject: {rdnSequence, [...]}
-      #     }
-      #   }
-      #
-      # For production use, this should be updated to use Erlang record
-      # accessors or the :public_key module's helper functions to extract
-      # the subject reliably across all certificate versions and formats.
-      #
-      # The current pattern may work for certificates decoded with :plain
-      # (the second argument to pkix_decode_cert), but :otp mode returns
-      # a different structure. Consider using:
-      #   cert_otp = :public_key.pkix_decode_cert(cert_der, :otp)
-      #   tbs = elem(cert_otp, 1)  # OTPTBSCertificate
-      #   subject = elem(tbs, 5)   # subject field
-      #
-      # TODO: Replace with proper OTP record access for production mTLS.
-      case cert do
-        {:Certificate, _, subject, _, _, _, _} ->
-          subject_fields = extract_subject_fields(subject)
-          {:ok, subject_fields}
+      # Use Record accessors for forward compatibility. If the returned
+      # value is not an OTPCertificate record (e.g., some exotic cert
+      # variant), the match fails and we report :invalid_cert.
+      tbs = otp_certificate(cert, :tbsCertificate)
+      subject = otp_tbs_certificate(tbs, :subject)
 
-        _ ->
-          {:error, :invalid_cert}
-      end
+      subject_fields = extract_subject_fields(subject)
+      {:ok, subject_fields}
     rescue
-      e in [ArgumentError, MatchError, FunctionClauseError] ->
+      e in [ArgumentError, MatchError, FunctionClauseError, CaseClauseError] ->
         # Certificate decoding can fail with these specific exceptions:
         #
         # - ArgumentError: malformed DER data passed to :public_key.pkix_decode_cert/2.
@@ -596,13 +625,16 @@ defmodule HttpCapabilityGateway.Gateway do
         #   or contains invalid tag/length pairs.
         #
         # - MatchError: unexpected certificate structure after successful DER decoding.
-        #   This can happen when the certificate uses extensions or encoding variants
-        #   that don't match the expected OTP record structure.
+        #   Raised when extract_subject_fields/1 receives something other than an
+        #   `{:rdnSequence, _}` tuple (e.g., an unusual encoding variant).
         #
         # - FunctionClauseError: unsupported certificate version or algorithm.
         #   The :public_key module's internal functions may not have clauses for
         #   every possible certificate version (v1 certificates, for example,
         #   have a different structure than v3).
+        #
+        # - CaseClauseError: unexpected record shape from Record.extract accessors
+        #   (e.g., a non-OTPCertificate value was returned).
         #
         # We log the exception for debugging but return a clean error tuple
         # rather than crashing the request handler. The caller (extract_trust_level_from_cert/1)
