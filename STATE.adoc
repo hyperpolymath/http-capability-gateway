@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+= HTTP Capability Gateway — Current State
+:date: 2026-04-16
+
+== Version
+
+0.1.0-dev (pre-release)
+
+== CRG Grade
+
+C (achieved 2026-04-04)
+
+== What Exists
+
+=== Elixir Modules (19)
+
+Core gateway pipeline, policy loader/validator/compiler, rate limiter,
+circuit breaker, proxy, GraphQL handler, gRPC handler, protocol router,
+structured logging, Minikaran anomaly detection, VeriSimDB audit client,
+SafeTrust (formally specified trust hierarchy), K9 service contracts.
+
+=== FFI
+
+* 2 Zig parsers: `ffi/zig/graphql/parser.zig`, `ffi/zig/grpc/parser.zig`
+* 2 Idris2 ABI modules: `src/abi/Protocol.idr`, `src/abi/Types.idr`
+
+=== Tests
+
+* 7 unit test files covering: gateway, policy_compiler, policy_loader,
+  policy_validator, policy_property, performance, http_capability_gateway
+* 0 integration tests
+* 0 end-to-end tests
+* 0 security tests
+* 0 benchmarks
+
+== What's Missing (P0 Release Blockers)
+
+See `ROADMAP.adoc` for full details. Summary:
+
+1. Security tests (request sanitization, header handling, SSRF, capability tokens)
+2. End-to-end tests (request lifecycle, policy hot-reload, upstream proxy)
+3. Benchmarks
+4. Real fuzz harness (placeholder exists, not real)
+
+== Authoritative Documents
+
+* `ROADMAP.adoc` — Current roadmap (canonical)
+* `TEST-NEEDS.md` — Test gap analysis
+* `PROOFS_NEEDED.md` — Formal proof gap analysis
+* `.machine_readable/STATE.a2ml` — Machine-readable state
+
+== Historical Documents
+
+* `IMPLEMENTATION-ROADMAP.md` — Written before code existed; no longer reflects reality
+* `ROADMAP-v2.md` — Aspirational v2 feature list; not current work

@@ -1,21 +1,77 @@
 // SPDX-License-Identifier: PMPL-1.0-or-later
 = HTTP Capability Gateway Roadmap
 
-== Current Status
+== Current Status (2026-04-16)
 
-The repository contains a real Elixir application, tests, and supporting docs, but the verification story still lags the implementation breadth.
+Version 0.1.0-dev. CRG grade C (achieved 2026-04-04).
 
-* The best near-term role for this project is a narrow API governance layer, not a universal front-door gateway.
-* `TEST-NEEDS.md` and `PROOF-NEEDS.md` define the real confidence gap more accurately than the old template roadmap did.
-* The main missing work is security depth, E2E proof, and scope discipline.
+The repository contains 19 Elixir modules, 2 Zig FFI parsers, 2 Idris2 ABI
+modules, and a growing test suite. The implementation covers the core gateway
+pipeline but verification is catching up. See `STATE.adoc` for the full picture.
+
+== MVP Scope Definition (v0.1.0)
+
+The MVP is a *narrow HTTP verb governance prefilter*. It is NOT a general-purpose
+API gateway, load balancer, or TLS terminator. The scope is intentionally
+constrained so that every claim can be backed by an executed test.
+
+=== What the MVP Does
+
+1. *Policy loading*: Read a YAML policy file (DSL v1) at startup and on reload.
+2. *Policy validation*: Reject malformed policies before compilation.
+3. *Policy compilation*: Compile validated policy into dual ETS tables (exact O(1) + regex O(r) + global O(1)).
+4. *Trust extraction*: Read trust level from `X-Trust-Level` header (stripped for non-trusted proxies).
+5. *Verb governance*: For each request, lookup the policy rule for (path, verb) and evaluate `rank(trust) >= rank(exposure)`.
+6. *Allow/deny*: Forward allowed requests to a single configured backend via HTTP. Deny with 403 or stealth response.
+7. *Stealth mode*: Return configurable status codes (e.g. 404) instead of 403 to hide endpoint existence.
+8. *Rate limiting*: Per-client token bucket with trust-level-based quotas.
+9. *Health/readiness probes*: `/health`, `/ready` endpoints.
+10. *Structured logging*: JSON-formatted access decisions with telemetry.
+11. *Atomic policy reload*: Swap to new policy tables without downtime.
+
+=== What the MVP Does NOT Do
+
+* No GraphQL or gRPC governance (handlers exist but are stubs; not MVP scope)
+* No multi-backend load balancing
+* No TLS termination
+* No dynamic trust scoring or control plane
+* No plugin system
+* No web UI dashboard
+* No distributed clustering
+* No Kubernetes operator
+
+=== MVP Proof Requirements
+
+Each claim above must have at least one passing test:
+
+[cols="1,2",options="header"]
+|===
+| Claim | Test File
+
+| Policy loading | `test/policy_loader_test.exs`
+| Policy validation | `test/policy_validator_test.exs`
+| Policy compilation | `test/policy_compiler_test.exs`
+| Trust extraction | `test/security_test.exs` (header handling)
+| Verb governance | `test/gateway_test.exs`, `test/e2e_test.exs`
+| Allow/deny decisions | `test/e2e_test.exs` (full lifecycle)
+| Stealth mode | `test/gateway_test.exs` (stealth describe block)
+| Rate limiting | `test/gateway_test.exs` (via plug pipeline)
+| Health/readiness | `test/e2e_test.exs` (health and readiness)
+| Structured logging | Telemetry events emitted (verified by integration)
+| Atomic policy reload | `test/e2e_test.exs` (hot-reload tests)
+| Request sanitization | `test/security_test.exs`
+| Trust spoofing prevention | `test/security_test.exs` (header stripping)
+| No atom exhaustion | `test/fuzz_test.exs` (arbitrary method strings)
+| No crash on arbitrary input | `test/fuzz_test.exs` (combined fuzzing)
+|===
 
 == P0 Release Blockers
 
-* [ ] Reconcile contradictory status docs so the repo has one truthful current-state story.
-* [ ] Add real security tests for request sanitization, header handling, SSRF resistance, and capability-token validation.
-* [ ] Add end-to-end tests for request lifecycle, policy hot reload, and upstream proxy behavior.
-* [ ] Remove or replace `tests/fuzz/placeholder.txt`.
-* [ ] Define the supported MVP narrowly enough that it can be proven.
+* [x] Reconcile contradictory status docs so the repo has one truthful current-state story.
+* [x] Add real security tests for request sanitization, header handling, SSRF resistance, and capability-token validation.
+* [x] Add end-to-end tests for request lifecycle, policy hot reload, and upstream proxy behavior.
+* [x] Remove `tests/fuzz/placeholder.txt` and add real property-based fuzz tests.
+* [x] Define the supported MVP narrowly enough that it can be proven.
 
 == P1 Gateway Hardening
 

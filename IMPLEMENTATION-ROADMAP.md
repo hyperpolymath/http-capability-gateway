@@ -1,10 +1,10 @@
 # http-capability-gateway - Implementation Roadmap
 
-> NOTE (2026-03-30): This document is historical. The repository now contains a real Mix application, Elixir modules, and tests. Use `ROADMAP.adoc`, `TEST-NEEDS.md`, and `PROOF-NEEDS.md` as the current source of truth. The main gap is verification and scope control, not initial scaffolding.
+> **HISTORICAL DOCUMENT (2026-04-16):** This document was written before any code existed and is no longer accurate. The repository now has 19 Elixir modules, 7 test files, 2 Zig FFI parsers, and 2 Idris2 ABI modules. The "What's Missing" list below is mostly **completed**. See `ROADMAP.adoc` and `STATE.adoc` for the current state.
 
 **Created:** 2026-01-22
-**Current Status:** 30% (Design Phase)
-**Target:** MVP v0.1.0 (80-90%)
+**Status at time of writing:** 30% (Design Phase) — **now ~55% with code implemented, verification lagging**
+**Target:** MVP v0.1.0
 **Estimated Effort:** 40-60 hours
 
 ---

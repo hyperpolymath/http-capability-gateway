@@ -4,13 +4,14 @@
 
 > Generated 2026-03-29 by punishing audit.
 
-## Current State
+## Current State (updated 2026-04-16)
 
 | Category     | Count | Notes |
 |-------------|-------|-------|
 | Unit tests   | 7     | gateway, policy_compiler, policy_loader, policy_validator, policy_property, performance, http_capability_gateway |
-| Integration  | 0     | Fuzz dir exists but is placeholder only |
-| E2E          | 0     | No end-to-end tests |
+| Security     | 1     | security_test.exs: sanitization, headers, SSRF, capability tokens (30+ tests) |
+| E2E          | 1     | e2e_test.exs: full lifecycle, policy hot-reload, upstream proxy, health probes (20+ tests) |
+| Fuzz         | 1     | fuzz_test.exs: property-based fuzzing with StreamData (6 properties) |
 | Benchmarks   | 0     | None |
 
 **Source modules:** ~19 Elixir modules (gateway, circuit_breaker, proxy, rate_limiter, safe_trust, graphql_handler, grpc_handler, policy_*, minikaran, logging, etc.) + 2 Idris2 ABI + 4 Zig FFI.
@@ -30,7 +31,7 @@
 - [ ] Health check / readiness probe validation
 
 ### Aspect Tests
-- **Security:** Request sanitization, header injection, SSRF prevention, capability token validation — ZERO tests
+- **Security:** Request sanitization, header injection, SSRF prevention, capability token validation — covered in `test/security_test.exs`
 - **Performance:** No load tests, no latency benchmarks, no throughput measurement
 - **Concurrency:** No tests for concurrent connections, race conditions in rate limiter, circuit breaker under contention
 - **Error handling:** No tests for upstream timeout, malformed requests, policy parse failures
@@ -55,8 +56,8 @@
 
 **CRITICAL.** 19 modules with 7 unit tests = 37% coverage by file count. A security gateway with ZERO security tests is a contradiction. No benchmarks for a performance-sensitive proxy is unacceptable. No concurrency tests for a concurrent system is negligent.
 
-## FAKE-FUZZ ALERT
+## FUZZ STATUS
 
-- `tests/fuzz/placeholder.txt` is a scorecard placeholder inherited from rsr-template-repo — it does NOT provide real fuzz testing
-- Replace with an actual fuzz harness (see rsr-template-repo/tests/fuzz/README.adoc) or remove the file
-- Priority: P2 — creates false impression of fuzz coverage
+- `tests/fuzz/placeholder.txt` has been removed (was a scorecard placeholder, not real fuzzing).
+- Real property-based fuzz tests added in `test/fuzz_test.exs` using StreamData.
+- Covers: arbitrary HTTP methods, trust strings, paths, policies, and combined input fuzzing.
