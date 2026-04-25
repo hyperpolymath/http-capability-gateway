@@ -162,4 +162,130 @@ defmodule HttpCapabilityGateway.PolicyLoaderTest do
       assert reason =~ "not found" or reason =~ "no such file"
     end
   end
+
+  describe "load_from_boj_catalog/1" do
+    setup do
+      root = Path.join(System.tmp_dir!(), "boj_catalog_test_#{:erlang.unique_integer([:positive])}")
+      File.mkdir_p!(root)
+      on_exit(fn -> File.rm_rf!(root) end)
+      {:ok, root: root}
+    end
+
+    defp write_cartridge(root, name, auth_method) do
+      dir = Path.join(root, name)
+      File.mkdir_p!(dir)
+
+      manifest = Jason.encode!(%{
+        "name" => name,
+        "version" => "1.0.0",
+        "description" => "Test cartridge #{name}",
+        "domain" => "Test",
+        "tier" => "Ayo",
+        "auth" => %{"method" => auth_method},
+        "tools" => [%{"name" => "tool1", "description" => "A tool"}]
+      })
+
+      File.write!(Path.join(dir, "cartridge.json"), manifest)
+    end
+
+    test "returns error for non-existent root" do
+      assert {:error, reason} = PolicyLoader.load_from_boj_catalog("/nonexistent/path")
+      assert is_binary(reason)
+    end
+
+    test "returns error for empty catalog directory", %{root: root} do
+      assert {:error, reason} = PolicyLoader.load_from_boj_catalog(root)
+      assert String.contains?(reason, "No valid cartridge.json")
+    end
+
+    test "generates valid DSL v1 policy from catalog", %{root: root} do
+      write_cartridge(root, "free-cart", "none")
+      write_cartridge(root, "keyed-cart", "bearer_token")
+
+      assert {:ok, policy} = PolicyLoader.load_from_boj_catalog(root)
+      assert policy["dsl_version"] == "1"
+      assert policy["service"]["name"] == "boj-server"
+      assert is_list(policy["governance"]["routes"])
+      assert policy["stealth"]["enabled"] == true
+    end
+
+    test "infers public exposure for auth.method none", %{root: root} do
+      write_cartridge(root, "public-cart", "none")
+
+      {:ok, policy} = PolicyLoader.load_from_boj_catalog(root)
+      routes = policy["governance"]["routes"]
+      invoke = Enum.find(routes, fn r -> r["cartridge"] == "public-cart" end)
+      assert invoke != nil, "invoke route for public-cart not found in #{inspect(routes)}"
+      assert invoke["exposure"] == "public"
+      assert invoke["verbs"] == ["POST"]
+    end
+
+    test "infers authenticated exposure for bearer_token", %{root: root} do
+      write_cartridge(root, "auth-cart", "bearer_token")
+
+      {:ok, policy} = PolicyLoader.load_from_boj_catalog(root)
+      routes = policy["governance"]["routes"]
+      invoke = Enum.find(routes, fn r -> r["cartridge"] == "auth-cart" end)
+      assert invoke != nil, "invoke route for auth-cart not found"
+      assert invoke["exposure"] == "authenticated"
+    end
+
+    test "infers authenticated exposure for api-key", %{root: root} do
+      write_cartridge(root, "apikey-cart", "api-key")
+
+      {:ok, policy} = PolicyLoader.load_from_boj_catalog(root)
+      routes = policy["governance"]["routes"]
+      invoke = Enum.find(routes, fn r -> r["cartridge"] == "apikey-cart" end)
+      assert invoke != nil, "invoke route for apikey-cart not found"
+      assert invoke["exposure"] == "authenticated"
+    end
+
+    test "includes all 5 static boj-server routes", %{root: root} do
+      write_cartridge(root, "any-cart", "none")
+
+      {:ok, policy} = PolicyLoader.load_from_boj_catalog(root)
+      routes = policy["governance"]["routes"]
+      paths = Enum.map(routes, & &1["path"])
+
+      assert Enum.any?(paths, &String.contains?(&1, "health"))
+      assert Enum.any?(paths, &String.contains?(&1, "menu"))
+      assert Enum.any?(paths, &String.contains?(&1, "cartridges"))
+      assert Enum.any?(paths, &String.contains?(&1, "[^/]"))
+      assert Enum.any?(paths, &String.contains?(&1, "well-known"))
+    end
+
+    test "generates one invoke route per cartridge", %{root: root} do
+      write_cartridge(root, "cart-a", "none")
+      write_cartridge(root, "cart-b", "api-key")
+      write_cartridge(root, "cart-c", "oauth2")
+
+      {:ok, policy} = PolicyLoader.load_from_boj_catalog(root)
+      invoke_routes =
+        policy["governance"]["routes"]
+        |> Enum.filter(fn r -> r["path"] =~ "invoke" end)
+
+      assert length(invoke_routes) == 3
+    end
+
+    test "skips dirs without cartridge.json", %{root: root} do
+      write_cartridge(root, "real-cart", "none")
+      # Directory without cartridge.json
+      File.mkdir_p!(Path.join(root, "no-manifest-dir"))
+
+      {:ok, policy} = PolicyLoader.load_from_boj_catalog(root)
+      invoke_routes =
+        policy["governance"]["routes"]
+        |> Enum.filter(fn r -> r["path"] =~ "invoke" end)
+
+      assert length(invoke_routes) == 1
+      assert hd(invoke_routes)["cartridge"] == "real-cart"
+    end
+
+    test "global_verbs is GET only", %{root: root} do
+      write_cartridge(root, "g-cart", "none")
+
+      {:ok, policy} = PolicyLoader.load_from_boj_catalog(root)
+      assert policy["governance"]["global_verbs"] == ["GET"]
+    end
+  end
 end

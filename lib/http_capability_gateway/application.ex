@@ -86,46 +86,61 @@ defmodule HttpCapabilityGateway.Application do
     end
   end
 
-  # Load policy from file, validate, and compile
+  # Load policy from file or BoJ catalog, validate, and compile.
+  # Resolution order:
+  #   1. BOJ_CARTRIDGES_ROOT env var  — catalog mode (auto-policy from cartridge.json)
+  #   2. :boj_cartridges_root config  — catalog mode
+  #   3. :policy_path config          — static YAML file
+  #   4. nil                          — skip (test mode)
   defp load_and_compile_policy do
+    catalog_root =
+      System.get_env("BOJ_CARTRIDGES_ROOT") ||
+        Application.get_env(:http_capability_gateway, :boj_cartridges_root)
+
     policy_path = Application.get_env(:http_capability_gateway, :policy_path)
 
-    # Skip policy loading if path is nil (useful for testing)
-    if is_nil(policy_path) do
-      Logger.info("Skipping policy load (policy_path is nil)")
-      {:ok, :ets.new(:policy_rules, [:set, :public, :named_table])}
-    else
-      Logger.info("Loading policy", path: policy_path)
+    cond do
+      is_binary(catalog_root) ->
+        Logger.info("Catalog mode: building policy from BoJ cartridges", root: catalog_root)
+        compile_from_loader(fn -> PolicyLoader.load_from_boj_catalog(catalog_root) end, catalog_root)
 
-      with {:ok, policy} <- PolicyLoader.load_from_file(policy_path),
+      is_binary(policy_path) ->
+        Logger.info("Static mode: loading policy from file", path: policy_path)
+        compile_from_loader(fn -> PolicyLoader.load_from_file(policy_path) end, policy_path)
+
+      true ->
+        Logger.info("Skipping policy load (no policy_path or BOJ_CARTRIDGES_ROOT configured)")
+        {:ok, :ets.new(:policy_rules, [:set, :public, :named_table])}
+    end
+  end
+
+  defp compile_from_loader(loader_fn, source) do
+    with {:ok, policy} <- loader_fn.(),
          :ok <- PolicyValidator.validate(policy),
          {:ok, table} <- PolicyCompiler.compile(policy) do
-        # Configure stealth from DSL v1 policy
-        configure_stealth(policy)
+      configure_stealth(policy)
 
-        # Log policy stats
-        stats = PolicyCompiler.stats(table)
-        service_name = get_in(policy, ["service", "name"]) || "unknown"
+      stats = PolicyCompiler.stats(table)
+      service_name = get_in(policy, ["service", "name"]) || "unknown"
 
-        Logging.log_policy_load(policy_path, :ok, %{
-          service: service_name,
-          total_rules: stats.total_rules,
-          global_rules: stats.global_rules,
-          route_rules: stats.route_rules,
-          verbs: Enum.map(stats.verbs, &to_string/1)
-        })
+      Logging.log_policy_load(source, :ok, %{
+        service: service_name,
+        total_rules: stats.total_rules,
+        global_rules: stats.global_rules,
+        route_rules: stats.route_rules,
+        verbs: Enum.map(stats.verbs, &to_string/1)
+      })
 
-        Logger.info("Policy compilation complete",
-          service: service_name,
-          rules: stats.total_rules
-        )
+      Logger.info("Policy compilation complete",
+        service: service_name,
+        rules: stats.total_rules
+      )
 
-        {:ok, table}
-      else
-        {:error, _reason} = error ->
-          Logging.log_policy_load(policy_path, error, %{})
-          error
-      end
+      {:ok, table}
+    else
+      {:error, _reason} = error ->
+        Logging.log_policy_load(source, error, %{})
+        error
     end
   end
 
