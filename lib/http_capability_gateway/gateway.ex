@@ -604,7 +604,12 @@ defmodule HttpCapabilityGateway.Gateway do
   # that would break if OTP ever extends the record layout. This is the
   # production-grade replacement for the earlier approximation that matched
   # on {:Certificate, _, subject, _, _, _, _}.
-  defp extract_cert_subject(cert_der) when is_binary(cert_der) do
+  #
+  # `@doc false` (public but internal): exposed so the mTLS test suite can
+  # drive it with real test-CA DER without a live TLS socket. Not part of
+  # the supported public API.
+  @doc false
+  def extract_cert_subject(cert_der) when is_binary(cert_der) do
     try do
       cert = :public_key.pkix_decode_cert(cert_der, :otp)
 
@@ -670,18 +675,52 @@ defmodule HttpCapabilityGateway.Gateway do
     end)
   end
 
-  # Check if certificate was verified
-  defp is_cert_verified(conn) do
-    # In a real implementation, check if certificate passed verification
-    # For now, assume verified if certificate is present
+  # Check whether the client certificate was actually verified by the
+  # TLS transport -- NOT merely present.
+  #
+  # The mTLS listener is configured (Application.tls_socket_opts/0) with
+  # `verify: :verify_peer` and `fail_if_no_peer_cert: true`. With that
+  # configuration the TLS handshake itself rejects any peer that does not
+  # present a certificate chaining to the configured CA. Chain validation
+  # is therefore a transport-level guarantee: a request can only reach this
+  # Plug pipeline over the HTTPS listener if its client certificate already
+  # verified during the handshake.
+  #
+  # The previous implementation returned `true` whenever ANY certificate
+  # was present. That is forgeable: a request arriving over the plaintext
+  # HTTP listener could carry an attacker-supplied DER blob and be treated
+  # as verified. We now fail closed unless ALL of the following hold:
+  #
+  #   1. the request arrived over TLS (`conn.scheme == :https`), so it came
+  #      through the verify_peer listener and not the plaintext one;
+  #   2. the adapter is the Cowboy adapter (the only adapter that can have
+  #      performed the TLS peer verification);
+  #   3. a non-empty peer certificate is present (redundant given
+  #      verify_peer + fail_if_no_peer_cert, but checked explicitly as
+  #      defence in depth and to reject empty/:undefined cert values).
+  #
+  # We deliberately do NOT reach into Cowboy's opaque request map to
+  # re-derive the SSL session: chain validation already happened at the
+  # handshake, Cowboy does not surface a post-handshake "verify result"
+  # field, and depending on undocumented internal keys would be fragile
+  # across Cowboy versions. The scheme + adapter + cert-presence triple is
+  # the sound, stable signal.
+  defp is_cert_verified(%Plug.Conn{scheme: :https, adapter: {Plug.Cowboy.Conn, _req}} = conn) do
     case get_peer_cert(conn) do
-      {:ok, _} -> true
+      {:ok, cert} when is_binary(cert) and byte_size(cert) > 0 -> true
       _ -> false
     end
   end
 
-  # Determine trust level from certificate attributes
-  defp determine_trust_level_from_cert(subject, verified) do
+  defp is_cert_verified(_conn), do: false
+
+  # Determine trust level from certificate attributes.
+  #
+  # `@doc false` (public but internal): exposed for the mTLS test suite so
+  # the cert->trust mapping can be proven against real test-CA certs. Not
+  # part of the supported public API.
+  @doc false
+  def determine_trust_level_from_cert(subject, verified) do
     cond do
       # Internal services: verified cert from internal CA with specific OU
       verified and Map.get(subject, :organizational_unit) == "Internal Services" ->

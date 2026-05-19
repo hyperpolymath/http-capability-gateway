@@ -38,51 +38,162 @@ defmodule HttpCapabilityGateway.Application do
         # Start HTTP server and other children
         port = Application.get_env(:http_capability_gateway, :port, 4000)
 
-        children = [
-          # Prometheus metrics exporter
-          {TelemetryMetricsPrometheus.Core, metrics: telemetry_metrics()},
+        # Build the listener child specs. When trust_level_source is "mtls",
+        # a valid TLS listener is mandatory; http_listeners/1 returns
+        # {:error, reason} and the application refuses to start (fail-closed)
+        # rather than silently falling back to the forgeable header path.
+        with {:ok, listeners} <- http_listeners(port) do
+          children =
+            [
+              # Prometheus metrics exporter
+              {TelemetryMetricsPrometheus.Core, metrics: telemetry_metrics()},
 
-          # VeriSimDB async audit log client -- started early so that the
-          # ETS buffer table (:capgw_verisimdb_buffer) exists before the
-          # first request arrives. Writes are fire-and-forget casts.
-          {VeriSimDB, []},
+              # VeriSimDB async audit log client -- started early so that the
+              # ETS buffer table (:capgw_verisimdb_buffer) exists before the
+              # first request arrives. Writes are fire-and-forget casts.
+              {VeriSimDB, []},
 
-          # Circuit breaker FSM -- started BEFORE Minikaran and the HTTP
-          # server so its ETS table (:gateway_circuit_breaker) exists before
-          # the first request arrives. The gateway calls allow?/1 on every
-          # request, so the table must be available from startup.
-          {CircuitBreaker, []},
+              # Circuit breaker FSM -- started BEFORE Minikaran and the HTTP
+              # server so its ETS table (:gateway_circuit_breaker) exists before
+              # the first request arrives. The gateway calls allow?/1 on every
+              # request, so the table must be available from startup.
+              {CircuitBreaker, []},
 
-          # Minikaran traffic anomaly detector -- started BEFORE the HTTP
-          # server so its telemetry handlers are attached before the first
-          # request arrives. This ensures zero observation loss at startup.
-          {Minikaran, name: Minikaran},
+              # Minikaran traffic anomaly detector -- started BEFORE the HTTP
+              # server so its telemetry handlers are attached before the first
+              # request arrives. This ensures zero observation loss at startup.
+              {Minikaran, name: Minikaran}
+            ] ++ listeners
 
-          # HTTP server with our Gateway router
-          {Plug.Cowboy, scheme: :http, plug: HttpCapabilityGateway.Gateway, options: [port: port]}
-        ]
+          opts = [strategy: :one_for_one, name: HttpCapabilityGateway.Supervisor]
 
-        opts = [strategy: :one_for_one, name: HttpCapabilityGateway.Supervisor]
+          Logger.info("Starting HTTP Capability Gateway", port: port)
 
-        Logger.info("Starting HTTP Capability Gateway", port: port)
+          # Attach Minikaran telemetry handlers after supervision tree starts.
+          # We use a callback to ensure handlers are attached only after
+          # the Minikaran GenServer is alive and ready to receive casts.
+          result = Supervisor.start_link(children, opts)
 
-        # Attach Minikaran telemetry handlers after supervision tree starts.
-        # We use a callback to ensure handlers are attached only after
-        # the Minikaran GenServer is alive and ready to receive casts.
-        result = Supervisor.start_link(children, opts)
+          case result do
+            {:ok, _pid} ->
+              Minikaran.TelemetryHandler.attach()
+              result
 
-        case result do
-          {:ok, _pid} ->
-            Minikaran.TelemetryHandler.attach()
-            result
+            error ->
+              error
+          end
+        else
+          {:error, reason} ->
+            Logger.error(
+              "mTLS listener configuration invalid; refusing to start (fail-closed)",
+              error: inspect(reason)
+            )
 
-          error ->
-            error
+            {:error, {:listener_config_invalid, reason}}
         end
 
       {:error, reason} ->
         Logger.error("Failed to load policy, cannot start gateway", error: reason)
         {:error, {:policy_load_failed, reason}}
+    end
+  end
+
+  # Build the HTTP/HTTPS listener child specs.
+  #
+  # The plaintext HTTP listener is always started: it serves the development
+  # header-trust path and unauthenticated public routes. The mTLS HTTPS
+  # listener is started in addition whenever TLS material is configured.
+  #
+  # Trust-level-source contract (the Phase B security invariant):
+  #
+  #   * "header" (default) -- HTTP listener only. Header trust is for
+  #     development and for public routes behind a trusted edge.
+  #
+  #   * "mtls" -- the HTTPS listener with `verify: :verify_peer` and
+  #     `fail_if_no_peer_cert: true` is MANDATORY. If the TLS material is
+  #     missing or unreadable we return {:error, _} so the application
+  #     refuses to start. We never silently downgrade an mTLS deployment to
+  #     the forgeable header path.
+  defp http_listeners(port) do
+    http = {Plug.Cowboy, scheme: :http, plug: HttpCapabilityGateway.Gateway, options: [port: port]}
+
+    trust_source = Application.get_env(:http_capability_gateway, :trust_level_source, "header")
+
+    case tls_socket_opts() do
+      {:ok, tls_opts} ->
+        tls_port = Application.get_env(:http_capability_gateway, :tls_port, 4443)
+
+        https =
+          {Plug.Cowboy,
+           scheme: :https,
+           plug: HttpCapabilityGateway.Gateway,
+           options: [port: tls_port] ++ tls_opts}
+
+        Logger.info("mTLS listener enabled", tls_port: tls_port, verify: :verify_peer)
+        {:ok, [http, https]}
+
+      :no_tls when trust_source == "mtls" ->
+        {:error,
+         "trust_level_source is \"mtls\" but TLS material is not configured. " <>
+           "Set MTLS_CA_CERT_PATH, GATEWAY_CERT_PATH and GATEWAY_KEY_PATH."}
+
+      :no_tls ->
+        {:ok, [http]}
+
+      {:error, _reason} = err when trust_source == "mtls" ->
+        err
+
+      {:error, reason} ->
+        Logger.warning(
+          "TLS material configured but unreadable; starting HTTP listener only",
+          error: inspect(reason)
+        )
+
+        {:ok, [http]}
+    end
+  end
+
+  # Resolve the Cowboy TLS socket options from the environment.
+  #
+  # Returns:
+  #   * {:ok, opts}      -- all three paths set and the files exist
+  #   * :no_tls          -- no TLS material configured at all
+  #   * {:error, reason} -- partially configured or files missing
+  #
+  # `verify: :verify_peer` + `fail_if_no_peer_cert: true` makes the TLS
+  # handshake itself reject any client that does not present a certificate
+  # chaining to `cacertfile`. A request that reaches the Plug pipeline over
+  # this listener has therefore already had its client certificate chain
+  # verified by the transport (see Gateway.is_cert_verified/1).
+  defp tls_socket_opts do
+    ca = Application.get_env(:http_capability_gateway, :mtls_ca_cert_path)
+    cert = Application.get_env(:http_capability_gateway, :gateway_cert_path)
+    key = Application.get_env(:http_capability_gateway, :gateway_key_path)
+
+    cond do
+      is_nil(ca) and is_nil(cert) and is_nil(key) ->
+        :no_tls
+
+      is_nil(ca) or is_nil(cert) or is_nil(key) ->
+        {:error,
+         "incomplete TLS configuration: MTLS_CA_CERT_PATH, GATEWAY_CERT_PATH " <>
+           "and GATEWAY_KEY_PATH must all be set together"}
+
+      true ->
+        missing = Enum.reject([ca, cert, key], &File.exists?/1)
+
+        if missing == [] do
+          {:ok,
+           [
+             cacertfile: ca,
+             certfile: cert,
+             keyfile: key,
+             verify: :verify_peer,
+             fail_if_no_peer_cert: true
+           ]}
+        else
+          {:error, "TLS files not found: #{Enum.join(missing, ", ")}"}
+        end
     end
   end
 

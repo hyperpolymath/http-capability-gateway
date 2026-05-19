@@ -2,7 +2,7 @@
 
 ## Current State
 
-- **src/abi/*.idr**: YES — `Protocol.idr`, `Types.idr`
+- **src/abi/*.idr**: YES — `Protocol.idr`, `Types.idr`, `MTLSPolicy.idr` (obligation stub)
 - **Dangerous patterns**: 0 (`believe_me` reference in Protocol.idr is documentation only)
 - **LOC**: ~9,500
 - **ABI layer**: Idris2 definitions present
@@ -15,6 +15,18 @@
 | Protocol state machine | Session state transitions are total | Prevent stuck/invalid protocol states |
 | Permission composition | Capability intersection/union laws | Ensure composed permissions don't escalate |
 | ABI type safety | FFI boundary type marshalling correctness | Prevent memory corruption at language boundary |
+| mTLS trust policy | An unverified client cert is never mapped to a privileged trust class (`classify CertUnverified _ = Untrusted`) | Security core of Phase B mTLS-as-primary-path: forged/unverified certs must be indistinguishable from anonymous |
+
+### mTLS trust policy (Phase B / standards#97)
+
+- **Claim stated:** `src/abi/MTLSPolicy.idr` — `unverifiedNeverPrivileged`.
+- **Status:** PENDING (scheduled for Phase C/D — standards#98/#99). The
+  obligation is recorded as a `0`-multiplicity hole; not yet discharged and
+  intentionally excluded from `gateway.ipkg modules` so it does not gate the
+  build before discharge.
+- **Mirrors:** the runtime decision in
+  `Gateway.determine_trust_level_from_cert/2` and the listener fail-closed
+  contract in `HttpCapabilityGateway.Application`.
 
 ## Recommended Prover
 

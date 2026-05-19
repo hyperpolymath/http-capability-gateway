@@ -50,7 +50,7 @@
 - **Zig FFI integration test execution** — requires zig toolchain; covered by separate FFI build step.
 - **Container build smoke test** — performed in CI, not in `mix test`.
 - **Error handling: upstream timeout** — Req receive_timeout covered implicitly; no dedicated test.
-- **Real-CA mTLS integration test** — code uses `Record.extract` accessors but no live cert in test fixtures.
+- ~~**Real-CA mTLS integration test** — code uses `Record.extract` accessors but no live cert in test fixtures.~~ **CLOSED (Phase B / standards#97):** `test/mtls_test.exs` drives the cert→trust pipeline with a real test CA (`test/fixtures/mtls/`) and proves the CA trust invariant via `:public_key.pkix_path_validation/3`. Live-socket handshake test across the gateway↔BoJ seam is Phase C scope.
 - **Self-tests for config validation on startup** — Application.start refuses without policy, but no dedicated assertion.
 
 ## Priority
