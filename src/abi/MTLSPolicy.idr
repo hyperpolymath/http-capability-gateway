@@ -7,8 +7,9 @@
 -- module is intentionally NOT listed in gateway.ipkg `modules`; it
 -- records the claim so it cannot be lost, without gating the build.
 --
--- No `believe_me`. The obligation is left as a `0 Postulate` documented
--- below; discharging it is the Phase C/D task.
+-- No verification-bypass primitives are used. The obligation is left as a
+-- `0`-multiplicity metavariable (an open hole) documented below;
+-- discharging it is the Phase C/D task.
 
 module MTLSPolicy
 
