@@ -54,6 +54,14 @@ defmodule HttpCapabilityGateway.MixProject do
       # Testing
       {:stream_data, "~> 1.0", only: :test},
 
+      # Benchmarking (Phase D — standards#99). Only loaded for the bench/*.exs
+      # harness; not pulled into prod/test runtime. Benchee is the Elixir-native
+      # statistical benchmark tool (p50/p95/p99, warmup, formatters). The
+      # JSON formatter (benchee_json) feeds bench/compare.exs the structured
+      # output it needs to diff against bench/baseline.json.
+      {:benchee, "~> 1.3", only: [:dev, :test], runtime: false},
+      {:benchee_json, "~> 1.0", only: [:dev, :test], runtime: false},
+
       # Documentation
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
