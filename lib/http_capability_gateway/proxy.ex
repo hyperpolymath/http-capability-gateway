@@ -28,6 +28,14 @@ defmodule HttpCapabilityGateway.Proxy do
   - Filters out hop-by-hop headers (Connection, Keep-Alive, etc.)
   - Adds X-Forwarded-* headers for provenance
   - Preserves Authorization headers
+  - Sets `X-Trust-Level` from the gateway-resolved trust level
+    (`conn.assigns[:trust_level]`), overriding any client-supplied value.
+    This is the BoJ contract (Phase A) -- BoJ's gnosis handler trusts the
+    header as authoritative because the gateway has already resolved it
+    (via mTLS in Phase B, or via trusted-proxy header in development).
+  - Sets `X-Request-ID` from the gateway-resolved request ID
+    (`conn.assigns[:request_id]`), overriding any client-supplied value
+    so the trace ID matches the gateway access log.
   """
 
   require Logger
@@ -106,11 +114,19 @@ defmodule HttpCapabilityGateway.Proxy do
     end
   end
 
-  # Build headers for backend request
+  # Build headers for backend request.
+  #
+  # The gateway-resolved trust level and request ID are appended LAST so
+  # that they override any client-supplied X-Trust-Level / X-Request-ID
+  # when the header list is collapsed into a map (last-write-wins). This
+  # is the Phase A contract invariant: the trust class the backend sees
+  # is the value the gateway resolved, never a header the client could
+  # have forged.
   defp build_backend_headers(conn) do
     conn.req_headers
     |> filter_hop_by_hop_headers()
     |> add_forwarded_headers(conn)
+    |> add_gateway_resolved_headers(conn)
     |> Enum.into(%{})
   end
 
@@ -133,6 +149,39 @@ defmodule HttpCapabilityGateway.Proxy do
         {"x-gateway", "http-capability-gateway"}
       ]
   end
+
+  # Append the gateway-resolved trust level and request ID. These keys
+  # appear LAST so the Enum.into(%{}) at the end of build_backend_headers
+  # treats them as authoritative -- any client-supplied X-Trust-Level
+  # (the SafeTrust attack surface) is shadowed by the value the gateway
+  # actually resolved during the strip+extract pipeline.
+  defp add_gateway_resolved_headers(headers, conn) do
+    trust_value =
+      conn.assigns
+      |> Map.get(:trust_level, :untrusted)
+      |> trust_to_string()
+
+    request_id =
+      conn.assigns
+      |> Map.get(:request_id, "")
+      |> to_string()
+
+    headers ++
+      [
+        {"x-trust-level", trust_value},
+        {"x-request-id", request_id}
+      ]
+  end
+
+  # Normalise a trust level into the string contract BoJ's gnosis handler
+  # expects. Accepts the SafeTrust atoms (`:untrusted`, `:authenticated`,
+  # `:internal`) and pass-through binary values for defensive forward-compat;
+  # anything else falls through as "untrusted".
+  defp trust_to_string(level) when level in [:untrusted, :authenticated, :internal],
+    do: Atom.to_string(level)
+
+  defp trust_to_string(level) when is_binary(level), do: level
+  defp trust_to_string(_), do: "untrusted"
 
   # Make HTTP request to backend using Req
   defp make_backend_request(method, url, headers, body) do
