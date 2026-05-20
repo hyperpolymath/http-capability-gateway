@@ -1,0 +1,33 @@
+{
+  "_comment": "Phase D scaffold placeholder baseline (standards#99). Numbers are TODO. Real collection in Phase D-4 — see docs/perf-contract.md §Baseline collection. DO NOT trust these numbers; the perf-regression CI gate is intentionally non-blocking until this file is populated by a baseline-collection PR.",
+  "_schema_version": "0.1.0-scaffold",
+  "_generated_at": "TODO(Phase D-4): replace with ISO8601 timestamp from collection run",
+  "_generated_by": "TODO(Phase D-4): replace with `bench/gateway_latency.exs` git SHA + machine fingerprint",
+  "_status": "scaffold-placeholder",
+  "scenarios": {
+    "health endpoint": {
+      "p50_us": "TODO",
+      "p95_us": "TODO",
+      "p99_us": "TODO",
+      "ips": "TODO"
+    },
+    "policy deny (405 fast-path)": {
+      "p50_us": "TODO",
+      "p95_us": "TODO",
+      "p99_us": "TODO",
+      "ips": "TODO"
+    },
+    "exact route allow (proxy short-circuits)": {
+      "p50_us": "TODO",
+      "p95_us": "TODO",
+      "p99_us": "TODO",
+      "ips": "TODO"
+    }
+  },
+  "tolerance": {
+    "_comment": "Multiplicative regression tolerance applied to each percentile. 1.20 = a PR is allowed to be up to 20% slower than baseline before the gate fails. Phase D-4 will revisit these once we have signal on intra-run variance.",
+    "p50_max_ratio": 1.20,
+    "p95_max_ratio": 1.30,
+    "p99_max_ratio": 1.50
+  }
+}

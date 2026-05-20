@@ -47,6 +47,7 @@ See `ROADMAP.adoc` for full details. Summary:
 * `ROADMAP.adoc` — Current roadmap (canonical)
 * `TEST-NEEDS.md` — Test gap analysis
 * `PROOFS_NEEDED.md` — Formal proof gap analysis
+* `docs/perf-contract.md` — Phase D published-latency contract (scaffold, standards#99)
 * `.machine_readable/STATE.a2ml` — Machine-readable state
 
 == Historical Documents

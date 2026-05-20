@@ -93,6 +93,26 @@ test-coverage:
     mix test --cover
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# BENCHMARKS (Phase D — standards#99)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Run the Phase D benchmark harness and diff against the checked-in baseline.
+# Mirrors what the perf-regression CI workflow does on every PR.
+# Scaffold-mode (current): always reports; gate is non-blocking until
+# bench/baseline.json `_status` flips to `active` (Phase D-4).
+bench:
+    mix run bench/gateway_latency.exs
+    mix run bench/compare.exs
+
+# Run the harness without the comparator — useful when collecting a new
+# baseline (Phase D-4). Result lands in bench/results.json; promote it
+# into bench/baseline.json via a dedicated `perf: rebaseline` PR.
+bench-collect:
+    mix run bench/gateway_latency.exs
+    @echo "Results written to bench/results.json"
+    @echo "To rebaseline: review numbers, then update bench/baseline.json in a dedicated PR."
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # LINT & FORMAT
 # ═══════════════════════════════════════════════════════════════════════════════
 

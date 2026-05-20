@@ -73,6 +73,11 @@ htmlcov/
 *.log
 /logs/
 
+# Phase D benchmark run artefacts (the harness regenerates these each run).
+# bench/baseline.json IS tracked — only the live run output is ignored.
+/bench/results.json
+/bench/console.log
+
 # Zig
 ffi/zig/zig-out/
 **/.zig-cache/
