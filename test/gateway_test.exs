@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: MPL-2.0
 defmodule HttpCapabilityGateway.GatewayTest do
   use ExUnit.Case, async: false
   import Plug.Conn

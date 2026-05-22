@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
+<!-- SPDX-License-Identifier: MPL-2.0 -->
 
 # Deployment Guide — HTTP Capability Gateway v0.1.0-dev
 

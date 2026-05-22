@@ -1,5 +1,5 @@
 ;; AGENTIC.a2ml - AI agent constraints and capabilities
-;; SPDX-License-Identifier: PMPL-1.0-or-later
+;; SPDX-License-Identifier: MPL-2.0
 
 (agentic
   (version . "0.1.0")

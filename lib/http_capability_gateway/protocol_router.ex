@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: MPL-2.0
 defmodule HttpCapabilityGateway.ProtocolRouter do
   @moduledoc """
   Multi-protocol router supporting HTTP/REST, gRPC, and GraphQL.

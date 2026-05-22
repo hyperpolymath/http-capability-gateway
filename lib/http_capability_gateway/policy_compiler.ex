@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: MPL-2.0
 defmodule HttpCapabilityGateway.PolicyCompiler do
   @moduledoc """
   Compiles validated policy into fast enforcement rules backed by ETS.

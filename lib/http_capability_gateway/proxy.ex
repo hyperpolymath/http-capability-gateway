@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: MPL-2.0
 defmodule HttpCapabilityGateway.Proxy do
   @moduledoc """
   HTTP Proxy for forwarding allowed requests to backend services.

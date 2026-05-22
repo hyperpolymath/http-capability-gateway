@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: MPL-2.0
 defmodule HttpCapabilityGateway.E2EBojIntegrationTest do
   @moduledoc """
   Phase C (`hyperpolymath/standards#98`) -- end-to-end verification of the

@@ -1,10 +1,10 @@
 ;; META.a2ml - Project metadata and architectural decisions
-;; SPDX-License-Identifier: PMPL-1.0-or-later
+;; SPDX-License-Identifier: MPL-2.0
 
 (project-meta
   (version . "0.1.0")
   (author . "Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>")
-  (license . "PMPL-1.0-or-later")
+  (license . "MPL-2.0")
   (standard . "RSR 2026")
   (architecture-decisions . ())
   (development-practices

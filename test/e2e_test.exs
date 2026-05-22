@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: MPL-2.0
 defmodule HttpCapabilityGateway.E2ETest do
   @moduledoc """
   End-to-end tests for the HTTP Capability Gateway.
