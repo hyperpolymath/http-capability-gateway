@@ -1,6 +1,6 @@
 {
-  "_comment": "Phase D scaffold-placeholder baseline (standards#99). Numbers are TODO. Phase D-1 (PR #12) wired the Benchee harness + this file + the CI gate; Phase D-2 (PR #14) added a real in-process loopback backend so the 'exact route allow (proxy 200)' scenario measures real dial-and-read cost instead of port-1 connection-refused; Phase D-3 (this update) added two scenarios -- 'trust-header rewrite (Proxy.build_backend_headers)' isolating the Phase A contract-header construction cost, and 'mTLS handshake (test CA)' isolating per-handshake cost using the Phase B real-CA fixture. Phase D-4 collects real numbers via the `perf: rebaseline` ritual in docs/perf-contract.md and flips `_status` to 'active' to arm the CI gate. DO NOT trust these numbers; the perf-regression CI gate is intentionally non-blocking until that flip.",
-  "_schema_version": "0.2.0-scaffold",
+  "_comment": "Phase D scaffold-placeholder baseline (standards#99). Numbers are TODO. Phase D-1 (PR #12) wired the Benchee harness + this file + the CI gate; Phase D-2 (PR #14) added a real in-process loopback backend so the 'exact route allow (proxy 200)' scenario measures real dial-and-read cost instead of port-1 connection-refused; Phase D-3 (PR #22) added two scenarios -- 'trust-header rewrite (Proxy.build_backend_headers)' isolating the Phase A contract-header construction cost, and 'mTLS handshake (test CA)' isolating per-handshake cost using the Phase B real-CA fixture. Phase D-3 follow-up (this update) adds 'mTLS amortised (test CA, N requests over kept-alive)' which holds one connection open and does N=16 send/recv round-trips per iteration, closing the bracket that scenarios 3 + 5 left loose. Phase D-4 collects real numbers via the `perf: rebaseline` ritual in docs/perf-contract.md and flips `_status` to 'active' to arm the CI gate. DO NOT trust these numbers; the perf-regression CI gate is intentionally non-blocking until that flip.",
+  "_schema_version": "0.3.0-scaffold",
   "_generated_at": "TODO(Phase D-4): replace with ISO8601 timestamp from collection run",
   "_generated_by": "TODO(Phase D-4): replace with `bench/gateway_latency.exs` git SHA + machine fingerprint",
   "_status": "scaffold-placeholder",
@@ -36,10 +36,17 @@
       "p95_us": "TODO",
       "p99_us": "TODO",
       "ips": "TODO"
+    },
+    "mTLS amortised (test CA, N requests over kept-alive)": {
+      "_comment_d3": "Phase D-3 follow-up scenario. One :ssl.connect/4 followed by N=16 send/recv round-trips on the open connection, then :ssl.close/1. Per-iteration cost is (handshake + N * request) / N, approximating the per-request cost the Phase E rollout sees once the handshake is amortised across a kept-alive pool. Closes the bracket scenarios 3 ('exact route allow (proxy 200)') and 5 ('mTLS handshake (test CA)') left loose. Uses a dedicated kept-alive acceptor on port 19_879 with an echo loop so the connection stays open across the N round-trips; payload is a tiny 8-byte frame so per-request cost is dominated by connection round-trip, not payload write/read.",
+      "p50_us": "TODO",
+      "p95_us": "TODO",
+      "p99_us": "TODO",
+      "ips": "TODO"
     }
   },
   "tolerance": {
-    "_comment": "Multiplicative regression tolerance applied to each percentile. 1.20 = a PR is allowed to be up to 20% slower than baseline before the gate fails. Phase D-4 will revisit these once we have signal on intra-run variance. D-3 scenarios use the same tolerances pending D-4 calibration; the mTLS handshake scenario is likely the noisiest (TLS RNG draws + cert chain validation timing) and may need a looser p99 cap once we see the spread.",
+    "_comment": "Multiplicative regression tolerance applied to each percentile. 1.20 = a PR is allowed to be up to 20% slower than baseline before the gate fails. Phase D-4 will revisit these once we have signal on intra-run variance. D-3 scenarios use the same tolerances pending D-4 calibration; the mTLS handshake scenario is likely the noisiest (TLS RNG draws + cert chain validation timing) and may need a looser p99 cap once we see the spread. The amortised scenario is expected to sit close to N * proxy-200 in per-iteration terms (since the handshake is paid once per 16 round-trips); its variance should be tighter than scenario 5's but looser than scenario 3's.",
     "p50_max_ratio": 1.20,
     "p95_max_ratio": 1.30,
     "p99_max_ratio": 1.50

@@ -66,6 +66,15 @@
 #                                                   client-internal cert against a raw
 #                                                   :ssl acceptor; isolates per-handshake
 #                                                   cost from the proxy hot-path
+#   6. mTLS amortised (test CA, N requests over kept-alive)
+#                                                 — D-3 follow-up — one :ssl.connect/4
+#                                                   followed by N tiny send/recv round-trips
+#                                                   on the open connection, then close.
+#                                                   Approximates the per-request cost the
+#                                                   Phase E rollout sees once the handshake
+#                                                   is amortised across a kept-alive pool.
+#                                                   Closes the bracket scenario 3 + scenario
+#                                                   5 left loose.
 #
 # Each scenario is reported under p50 / p95 / p99 latency, matching the SLO
 # names in docs/perf-contract.md. Throughput (req/s) is reported as a
@@ -76,10 +85,7 @@
 #   • Compare against a populated baseline.json (Phase D-4 collects baseline
 #     numbers on a CI-equivalent target and flips `_status` to `active`)
 #   • Run distributed (single-node only; estate concurrency-pool guard in #122)
-#   • Capture amortised cost of N requests over one kept-alive TLS connection
-#     as a dedicated scenario (the per-handshake cost in scenario 5 plus the
-#     proxy-200 cost in scenario 3 already bracket it; if D-4 numbers show
-#     the bracket is loose, a follow-up adds an explicit amortised scenario)
+# (Scenario 6 in D-3 closes the previously deferred amortised follow-up.)
 #
 # Those are sequenced post-D-3 tasks under the single-lane HCG channel
 # (standards#91).
@@ -284,6 +290,86 @@ acceptor_pid =
     accept_loop.(accept_loop)
   end)
 
+# ── mTLS amortised acceptor fixture (Phase D-3, scenario 6) ──────────────────
+#
+# Second :ssl listener dedicated to the amortised scenario. Each accepted
+# connection is held open and the server echoes back every frame the
+# client sends; the connection terminates when the client closes its
+# side. The amortised bench scenario opens ONE connection, does N
+# send/recv round-trips, then closes, so this acceptor sees one
+# handshake + N echo cycles + one close per Benchee iteration.
+#
+# Separate listener (port 19_879) instead of reusing 19_878: scenario 5's
+# acceptor is shaped to close immediately after handshake, which would
+# kill the kept-alive connection scenario 6 needs. Keeping the two
+# fixtures independent also means D-4 can run them back-to-back without
+# the scenario-5 acceptor's close-on-handshake racing scenario 6's
+# send/recv loop.
+#
+# N (kept_alive_request_count below): chosen as 16 — a small bounded
+# constant in the same order of magnitude as typical HTTP/1.1 keep-alive
+# pool reuse counts before pool rotation, large enough that
+# (handshake + N * request) / N visibly differs from the per-handshake
+# cost in scenario 5 (so the bracket scenarios 5 + 3 left loose is
+# visibly tightened), small enough that one iteration completes well
+# within the Benchee per-iteration budget.
+#
+# Payload (kept_alive_payload below): a tiny 8-byte ASCII frame. The
+# point is to measure per-request *connection* cost (round-trip on an
+# established TLS session), not bulk-data throughput; the payload is
+# kept deliberately small so socket-write timings don't dominate.
+kept_alive_request_count = 16
+kept_alive_payload = "bench-d3"
+
+{:ok, kept_alive_listen_socket} = :ssl.listen(19_879, tls_listen_opts)
+
+kept_alive_acceptor_pid =
+  spawn_link(fn ->
+    accept_loop = fn loop ->
+      case :ssl.transport_accept(kept_alive_listen_socket, 5_000) do
+        {:ok, transport_socket} ->
+          case :ssl.handshake(transport_socket, 5_000) do
+            {:ok, tls_socket} ->
+              # Echo loop: read whatever the client sends, send it back,
+              # continue until the client closes. The bench client does
+              # exactly N send/recv pairs and then closes, so this loop
+              # exits cleanly on {:error, :closed} once :ssl.close/1 has
+              # been called on the client side.
+              echo_loop = fn echo ->
+                case :ssl.recv(tls_socket, byte_size(kept_alive_payload), 5_000) do
+                  {:ok, data} ->
+                    case :ssl.send(tls_socket, data) do
+                      :ok -> echo.(echo)
+                      {:error, _reason} -> :ssl.close(tls_socket)
+                    end
+
+                  {:error, :closed} ->
+                    :ok
+
+                  {:error, _reason} ->
+                    :ssl.close(tls_socket)
+                end
+              end
+
+              echo_loop.(echo_loop)
+
+            {:error, _reason} ->
+              :ok
+          end
+
+          loop.(loop)
+
+        {:error, :timeout} ->
+          loop.(loop)
+
+        {:error, :closed} ->
+          :ok
+      end
+    end
+
+    accept_loop.(accept_loop)
+  end)
+
 # ── Benchee scenarios ────────────────────────────────────────────────────────
 
 try do
@@ -304,6 +390,22 @@ try do
       end,
       "mTLS handshake (test CA)" => fn ->
         {:ok, sock} = :ssl.connect(~c"127.0.0.1", tls_port, tls_client_opts, 5_000)
+        :ssl.close(sock)
+      end,
+      "mTLS amortised (test CA, N requests over kept-alive)" => fn ->
+        # ONE handshake, then N tiny send/recv round-trips on the open
+        # connection, then close. Per-iteration cost is
+        # (handshake + N * request) / N which approximates the per-request
+        # cost in a kept-alive setting. N is the module-level constant
+        # `kept_alive_request_count` (see the amortised acceptor fixture
+        # above for why 16 was chosen).
+        {:ok, sock} = :ssl.connect(~c"127.0.0.1", 19_879, tls_client_opts, 5_000)
+
+        Enum.each(1..kept_alive_request_count, fn _ ->
+          :ok = :ssl.send(sock, kept_alive_payload)
+          {:ok, _echoed} = :ssl.recv(sock, byte_size(kept_alive_payload), 5_000)
+        end)
+
         :ssl.close(sock)
       end
     },
@@ -333,4 +435,9 @@ after
   Process.unlink(acceptor_pid)
   :ssl.close(listen_socket)
   Process.exit(acceptor_pid, :shutdown)
+
+  # Same teardown shape for the amortised acceptor (Phase D-3 scenario 6).
+  Process.unlink(kept_alive_acceptor_pid)
+  :ssl.close(kept_alive_listen_socket)
+  Process.exit(kept_alive_acceptor_pid, :shutdown)
 end
