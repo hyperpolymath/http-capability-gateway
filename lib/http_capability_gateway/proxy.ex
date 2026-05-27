@@ -256,4 +256,13 @@ defmodule HttpCapabilityGateway.Proxy do
         {:error, reason}
     end
   end
+
+  # Benchmark seam (Phase D-3, standards#99). Exposes the trust-header /
+  # request-id rewrite path so bench/gateway_latency.exs can measure it in
+  # isolation rather than folded into the full proxy-200 scenario. The
+  # underlying build_backend_headers/1 stays private; this is a thin,
+  # named hook so the bench surface is explicit and grep-discoverable.
+  # Not for production callers: forward/2 is the supported entry point.
+  @doc false
+  def __benchmark_build_backend_headers__(conn), do: build_backend_headers(conn)
 end

@@ -10,13 +10,35 @@
 # immediately) so the timing only captured the in-gateway cost up to the
 # proxy dial, not the dial-and-read cost.
 #
-# Phase D-2 (this file): adds an in-process Plug.Cowboy loopback backend
-# that responds 200 cheaply, so the allow scenario measures the real
-# end-to-end cost the gateway pays in production — header rewrite +
-# Req-based proxy + response forwarding. This is the cost surface the
-# Phase E rollout SLA (p99 latency at production endpoints) is measured
-# against; without it the baseline numbers a Phase D-4 collection would
-# produce are not comparable to production reality.
+# Phase D-2 (http-capability-gateway#14): adds an in-process Plug.Cowboy
+# loopback backend that responds 200 cheaply, so the allow scenario
+# measures the real end-to-end cost the gateway pays in production —
+# header rewrite + Req-based proxy + response forwarding. This is the
+# cost surface the Phase E rollout SLA (p99 latency at production
+# endpoints) is measured against; without it the baseline numbers a
+# Phase D-4 collection would produce are not comparable to production
+# reality.
+#
+# Phase D-3 (this file): pulls two cost surfaces out of the proxy-200
+# scenario into dedicated scenarios so D-4 baseline collection can
+# attribute them independently:
+#
+#   • trust-header rewrite (Proxy.build_backend_headers) — the gateway's
+#     contract-critical header surface (X-Trust-Level / X-Request-ID /
+#     X-Forwarded-*) measured in isolation, with no policy lookup and no
+#     network I/O. Phase A's "the trust class the backend sees is the
+#     value the gateway resolved" invariant lives here, so if a change
+#     ever inflates this cost, D-4 will catch it.
+#
+#   • mTLS handshake (test CA) — per-handshake cost on a raw :ssl
+#     listener using the Phase B real-CA fixtures in test/fixtures/mtls.
+#     Each iteration opens a fresh TLS connection with client-internal.crt
+#     and immediately closes it; no policy lookup, no proxy. This is the
+#     connection-spike cost the Phase E rollout has to budget for —
+#     amortised cost across many requests is bounded by this number plus
+#     the proxy-200 scenario, and isolating it lets us track CA chain /
+#     curve / Cowboy-TLS-opt changes that would shift it independent of
+#     the rest of the pipeline.
 #
 # Run locally:
 #
@@ -28,13 +50,22 @@
 #
 # CI invocation lives in .github/workflows/perf-regression.yml.
 #
-# ── Scenarios (Phase D-2 scope) ──────────────────────────────────────────────
+# ── Scenarios (Phase D-3 scope) ──────────────────────────────────────────────
 #
-#   1. health endpoint                 — fastest path, no policy lookup, no proxy
-#   2. policy deny (405 fast-path)     — unknown verb, policy table hit, no proxy
-#   3. exact route allow (proxy 200)   — O(1) policy hit; proxies to the
-#                                        in-process loopback backend which
-#                                        responds 200 with a tiny JSON body
+#   1. health endpoint                            — fastest path, no policy, no proxy
+#   2. policy deny (405 fast-path)                — unknown verb, policy table hit, no proxy
+#   3. exact route allow (proxy 200)              — O(1) policy hit; proxies to the
+#                                                   in-process loopback backend which
+#                                                   responds 200 with a tiny JSON body
+#   4. trust-header rewrite (Proxy.build_backend_headers)
+#                                                 — D-3 — direct call to the proxy
+#                                                   header-rewrite seam; isolates the
+#                                                   Phase A contract-header construction
+#                                                   from policy lookup and network I/O
+#   5. mTLS handshake (test CA)                   — D-3 — :ssl.connect/4 with the Phase B
+#                                                   client-internal cert against a raw
+#                                                   :ssl acceptor; isolates per-handshake
+#                                                   cost from the proxy hot-path
 #
 # Each scenario is reported under p50 / p95 / p99 latency, matching the SLO
 # names in docs/perf-contract.md. Throughput (req/s) is reported as a
@@ -42,13 +73,15 @@
 #
 # ── What this harness still deliberately does NOT do ─────────────────────────
 #
-#   • Exercise the mTLS handshake path (Phase D-3; reuses Phase B fixture)
-#   • Capture the X-Trust-Level rewrite cost as a dedicated scenario
-#     (Phase D-3 — the cost is currently folded into the proxy-200 scenario)
-#   • Compare against a populated baseline.json (Phase D-4 collects baseline)
+#   • Compare against a populated baseline.json (Phase D-4 collects baseline
+#     numbers on a CI-equivalent target and flips `_status` to `active`)
 #   • Run distributed (single-node only; estate concurrency-pool guard in #122)
+#   • Capture amortised cost of N requests over one kept-alive TLS connection
+#     as a dedicated scenario (the per-handshake cost in scenario 5 plus the
+#     proxy-200 cost in scenario 3 already bracket it; if D-4 numbers show
+#     the bracket is loose, a follow-up adds an explicit amortised scenario)
 #
-# Those are sequenced post-D-2 tasks under the single-lane HCG channel
+# Those are sequenced post-D-3 tasks under the single-lane HCG channel
 # (standards#91).
 
 # `mix run` loads all deps onto the code path, including Benchee and
@@ -57,6 +90,11 @@
 # Boot the OTP supervision tree so RateLimiter ETS, K9Contract, etc. are
 # initialised — Gateway.call/2 depends on those processes existing.
 {:ok, _} = Application.ensure_all_started(:http_capability_gateway)
+
+# Phase D-3 scenario 5 uses :ssl directly (raw acceptor + client connect)
+# without going through Plug.Cowboy's TLS startup, so the application
+# needs to be started explicitly. It's part of OTP, no extra dep needed.
+{:ok, _} = Application.ensure_all_started(:ssl)
 
 alias HttpCapabilityGateway.{Gateway, PolicyCompiler}
 
@@ -131,6 +169,121 @@ Application.put_env(:http_capability_gateway, :rate_limits, %{
 require Plug.Test
 import Plug.Test, only: [conn: 2]
 
+alias HttpCapabilityGateway.Proxy
+
+# ── Trust-header rewrite seam fixture (Phase D-3, scenario 4) ───────────────
+#
+# Pre-build a conn that already has the assigns the Phase C trust-header
+# rewrite reads (trust_level + request_id). The bench function then calls
+# the Proxy benchmark hook directly so the measurement is the rewrite
+# cost in isolation -- no policy lookup, no Gateway.call/2 pipeline, no
+# network. This is the cost surface the Phase A contract invariant lives
+# on: build_backend_headers/1 is what produces X-Trust-Level / X-Request-ID
+# as the authoritative gateway-resolved values.
+trust_header_conn =
+  conn(:get, "/api/bench")
+  |> Plug.Conn.put_req_header("authorization", "Bearer test-token")
+  |> Plug.Conn.put_req_header("user-agent", "bench/d-3")
+  |> Plug.Conn.put_req_header("accept", "application/json")
+  |> Plug.Conn.assign(:trust_level, :authenticated)
+  |> Plug.Conn.assign(:request_id, "bench-d3-rewrite")
+
+# ── mTLS acceptor fixture (Phase D-3, scenario 5) ────────────────────────────
+#
+# Stand up a raw :ssl listener using a test CA chain generated in-memory
+# via :public_key.pkix_test_data/1. Each Benchee iteration in scenario 5
+# dials this listener with the matching client cert+key and immediately
+# closes the connection, so what's measured is the per-handshake cost
+# (verify_peer + cert chain validation against the test CA + key exchange
+# + finished).
+#
+# Why in-memory and not test/fixtures/mtls/*.{crt,key}: the committed
+# Phase B fixture (used by test/mtls_test.exs) only ships the .crt files
+# — *.key is gitignored at the repo root. Reusing the committed *.crt
+# files would require also committing the matching *.key files (or
+# carving a fixture exception in .gitignore), which the estate security
+# posture prefers we don't do for a bench fixture. The chain shape and
+# verify_peer behaviour are identical; this scenario tests the same TLS
+# transport guarantee, just with key material that never touches disk.
+# If D-4 baseline collection shows the handshake cost is sensitive to
+# RSA key size or cert chain length, a follow-up moves to a fixture
+# shape closer to the production CA's parameters.
+#
+# Deliberately raw :ssl instead of Plug.Cowboy.https: this scenario must
+# isolate the handshake from any HTTP-level pipeline, so we accept and
+# discard at the TLS layer. The HTTP-over-TLS cost is bracketed by
+# scenario 3 (proxy-200) + scenario 5 (handshake) for D-4 baseline.
+#
+# Port choice: 19_878 — one above the D-2 loopback (19_877) so the two
+# fixtures can coexist when CI runs them back-to-back without socket
+# reuse jitter.
+# :public_key.pkix_test_data/1 returns a map with :server_config and
+# :client_config keys, each already shaped as a property list ready to
+# concat into :ssl.listen / :ssl.connect options. Empty cert-opts lists
+# tell OTP to use the default RSA key parameters; if D-4 reveals the
+# default size shifts handshake cost in a misleading direction we'll
+# pin {rsa, Size, Exp} explicitly. Map keys here are Erlang atoms, so
+# Elixir's %{atom: value} shorthand maps 1:1.
+%{server_config: tls_listen_base, client_config: tls_client_base} =
+  :public_key.pkix_test_data(%{
+    server_chain: %{root: [], intermediates: [], peer: []},
+    client_chain: %{root: [], intermediates: [], peer: []}
+  })
+
+tls_port = 19_878
+
+tls_listen_opts =
+  tls_listen_base ++
+    [
+      verify: :verify_peer,
+      fail_if_no_peer_cert: true,
+      reuseaddr: true,
+      active: false
+    ]
+
+tls_client_opts =
+  tls_client_base ++
+    [
+      verify: :verify_peer,
+      # The synthesised peer cert has an arbitrary CN -- skip hostname
+      # verify since we dial 127.0.0.1. Cert-chain trust is still
+      # enforced via verify_peer against the in-memory CA the client
+      # was given via :public_key.pkix_test_data.
+      server_name_indication: :disable,
+      active: false
+    ]
+
+# Acceptor loop: a tiny process that accepts handshakes and closes them.
+# Spawned as part of fixture setup; lives for the duration of the bench
+# run and is killed in the after clause.
+{:ok, listen_socket} = :ssl.listen(tls_port, tls_listen_opts)
+
+acceptor_pid =
+  spawn_link(fn ->
+    accept_loop = fn loop ->
+      case :ssl.transport_accept(listen_socket, 5_000) do
+        {:ok, transport_socket} ->
+          # Drive the handshake to completion on the server side; the
+          # cost the *client* sees is what scenario 5 measures, but the
+          # server has to play its half or the client times out.
+          case :ssl.handshake(transport_socket, 5_000) do
+            {:ok, tls_socket} -> :ssl.close(tls_socket)
+            {:error, _reason} -> :ok
+          end
+
+          loop.(loop)
+
+        {:error, :timeout} ->
+          loop.(loop)
+
+        {:error, :closed} ->
+          :ok
+      end
+    end
+
+    accept_loop.(accept_loop)
+  end)
+
 # ── Benchee scenarios ────────────────────────────────────────────────────────
 
 try do
@@ -145,11 +298,18 @@ try do
       end,
       "exact route allow (proxy 200)" => fn ->
         conn(:get, "/api/bench") |> Gateway.call([])
+      end,
+      "trust-header rewrite (Proxy.build_backend_headers)" => fn ->
+        Proxy.__benchmark_build_backend_headers__(trust_header_conn)
+      end,
+      "mTLS handshake (test CA)" => fn ->
+        {:ok, sock} = :ssl.connect(~c"127.0.0.1", tls_port, tls_client_opts, 5_000)
+        :ssl.close(sock)
       end
     },
-    # Phase D-1/D-2: keep timings short so the workflow stays under the
-    # 6-minute estate CI budget. Phase D-4 may widen warmup/time once the
-    # rebaseline ritual is in place.
+    # Phase D-1/D-2/D-3: keep timings short so the workflow stays under
+    # the 6-minute estate CI budget. Phase D-4 may widen warmup/time
+    # once the rebaseline ritual is in place.
     warmup: 1,
     time: 2,
     memory_time: 0,
@@ -166,4 +326,11 @@ after
   # Stop the loopback backend so the script exits cleanly. Plug.Cowboy
   # registers the listener under the plug module's name by default.
   _ = Plug.Cowboy.shutdown(HttpCapabilityGateway.Bench.LoopbackBackend.HTTP)
+
+  # Tear down the mTLS acceptor fixture (Phase D-3): closing the listen
+  # socket causes the transport_accept loop to exit on :closed; the
+  # linked acceptor process then terminates normally.
+  Process.unlink(acceptor_pid)
+  :ssl.close(listen_socket)
+  Process.exit(acceptor_pid, :shutdown)
 end
