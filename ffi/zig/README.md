@@ -29,6 +29,31 @@ zig build test
 
 All exported functions use C calling convention for Idris2 FFI compatibility:
 
+### HTTP server (`hpm_http_*`)
+
+Synchronous, single-threaded HTTP/1.1 server primitives intended to sit
+behind a TLS reverse proxy. Used by the OikosBot for webhook reception.
+
+- `hpm_http_server_listen(host, host_len, port) -> server*` — bind TCP
+- `hpm_http_server_port(server) -> port` — query bound port (e.g. when
+  `port=0` was passed)
+- `hpm_http_server_accept(server) -> request*` — block until next request,
+  return parsed head
+- `hpm_http_request_method(request) -> method_ordinal` — matches
+  `std.http.Method` (GET=0 HEAD=1 POST=2 PUT=3 DELETE=4 CONNECT=5
+  OPTIONS=6 TRACE=7 PATCH=8)
+- `hpm_http_request_path(request, out, cap) -> bytes` — copy URI target
+- `hpm_http_request_header(request, name, name_len, out, cap) -> bytes` —
+  case-insensitive lookup; returns 0 if absent
+- `hpm_http_request_body(request, out, cap) -> bytes` — read body (max 1
+  MiB, content-length-driven); idempotent
+- `hpm_http_request_respond(request, status, headers, headers_len, body,
+  body_len) -> 0/-1` — send full response; connection closes after
+- `hpm_http_request_free(request)` — close + free
+- `hpm_http_server_free(server)` — close listener + free
+
+Idris2 wrappers live in `../../src/abi/HttpServer.idr`.
+
 ### gRPC
 - `parse_grpc_request` - Parse HTTP/2 gRPC frame
 - Validates frame headers and extracts service/method

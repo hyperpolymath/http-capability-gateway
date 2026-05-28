@@ -45,8 +45,14 @@ pub fn build(b: *std.Build) void {
     const grpc_tests = b.addTest(.{
         .root_module = grpc_module,
     });
+    const run_grpc_tests = b.addRunArtifact(grpc_tests);
 
-    const run_tests = b.addRunArtifact(grpc_tests);
+    const main_tests = b.addTest(.{
+        .root_module = lib_module,
+    });
+    const run_main_tests = b.addRunArtifact(main_tests);
+
     const test_step = b.step("test", "Run all tests");
-    test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_grpc_tests.step);
+    test_step.dependOn(&run_main_tests.step);
 }

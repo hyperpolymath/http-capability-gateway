@@ -7,7 +7,7 @@ package gateway
 sourcedir = "src/abi"
 
 -- Modules to build
-modules = Protocol, Types
+modules = HttpServer, Protocol, Types
 
 -- Dependencies
 depends = base >= 0.7.0
