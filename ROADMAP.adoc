@@ -106,3 +106,48 @@ Each claim above must have at least one passing test:
 == Future Directions
 
 Broaden scope only after the narrow API-governance role is demonstrably trustworthy.
+
+== External validation — prior art for write-API anti-abuse design (2026-05-28)
+
+While drafting a feature request to GitHub asking for a REST + GraphQL surface
+to create and seed repository wikis (re-file of community/community#196186),
+the proposal's "anti-abuse considerations" section names five mechanisms that
+should be baked into any new write-API for an agent-collaborative world:
+per-author rate limits, token scope gating, optional human-attestation
+header, org-level opt-in, optional per-page review queue.
+
+Internal audit confirmed http-capability-gateway already implements a 1:1
+mapping of every one of those mechanisms in shipping code:
+
+[cols="1,2",options="header"]
+|===
+| Proposal mechanism | Gateway implementation
+
+| Per-author rate limits           | `RateLimiter` — token-bucket keyed by `{client_ip, trust_level}`
+| Token scope gating               | `SafeTrust` — three-level capability lattice (untrusted < authenticated < internal), formally verified in Idris2
+| Human-attestation header         | A2ML — tamper-evident JSON envelopes with SHA-256 hashes, issuer + policy_hash, parameter redaction (see `docs/A2ML-EXPLAINED.adoc`)
+| Surfaced in audit metadata       | VeriSimDB — durable append-only audit trail (`capgw:audit`) with structured forensic replay
+| Org-level opt-in                 | YAML Verb Governance Spec (DSL v1) compiled to ETS — per-deployment policy
+| Per-page review queue            | K9-SVC contracts — SLA + breach policies (see `docs/K9-SVC-EXPLAINED.adoc`)
+| (Bonus, beyond proposal)         | mTLS client cert → X.509 OU → capability grant; stealth mode (404 not 403); policy versioning; atom-exhaustion DoS defence
+|===
+
+This is **not a roadmap commitment to externalise the gateway as a
+GitHub-API drop-in** — the MVP scope remains narrow per the sections above.
+The note is a marker for two reasons:
+
+1. *Reference value if the GitHub request gains traction.* If a Hubber
+   engages on the discussion thread asking "do you have prior art for this
+   design?", the gateway is the answer. The mapping above documents that
+   answer in advance so future-Jonathan doesn't have to re-derive it.
+
+2. *Confidence anchor for the narrow MVP.* Knowing the gateway's design
+   maps cleanly onto an externally-recognised problem (agent-safe write
+   APIs in a documentation-as-code world) strengthens the argument that the
+   narrow scope is on the right axis — even though the MVP deliberately
+   does NOT chase the wider problem.
+
+The discussion thread + the gateway will diverge over time; this note pins
+the snapshot relationship at 2026-05-28. If the discussion lands and
+GitHub asks for a more substantive engagement, that's a separate scope
+decision documented at the point it arises, not here.
