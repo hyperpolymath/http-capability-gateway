@@ -110,7 +110,18 @@ bench:
 bench-collect:
     mix run bench/gateway_latency.exs
     @echo "Results written to bench/results.json"
-    @echo "To rebaseline: review numbers, then update bench/baseline.json in a dedicated PR."
+    @echo "To rebaseline: run 'just rebaseline' or update bench/baseline.json by hand in a dedicated PR."
+
+# Run the harness and regenerate bench/baseline.json from the result
+# (Phase D-4 rebaseline ritual; see docs/perf-contract.md). Leaves
+# `_status` as scaffold-placeholder — the maintainer reviews and flips
+# to "active" in the rebaseline PR. The CI workflow
+# .github/workflows/perf-rebaseline.yml runs the same two steps on
+# the published reference target (ubuntu-latest); use this recipe to
+# preview the regeneration locally before dispatching the workflow.
+rebaseline:
+    mix run bench/gateway_latency.exs
+    mix run bench/rebaseline.exs
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # LINT & FORMAT
