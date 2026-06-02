@@ -47,6 +47,7 @@ defmodule Bench.Compare do
   defp compare(results, baseline) do
     status = Map.get(baseline, "_status", "unknown")
     tolerance = Map.get(baseline, "tolerance", %{})
+    baseline_scenarios = Map.get(baseline, "scenarios", %{})
 
     IO.puts("# Phase D — Performance Regression Report")
     IO.puts("")
@@ -59,15 +60,18 @@ defmodule Bench.Compare do
           "> SCAFFOLD MODE — bench/baseline.json has not been populated yet " <>
             "(Phase D-4 collects the real baseline). This run is informational " <>
             "only; the gate is **non-blocking** until baseline.json `_status` " <>
-            "is flipped to `active`."
+            "is flipped to `active`. Schema drift (a scenario present in " <>
+            "results.json but absent from baseline.json, or vice versa) is " <>
+            "surfaced inline as `scaffold (would fail: ...)` so a rebaseline " <>
+            "PR previews the active-mode verdict before the gate is armed."
         )
 
         IO.puts("")
-        emit_table(results, nil, tolerance)
+        emit_table(results, baseline_scenarios, tolerance, enforce: false)
         System.halt(0)
 
       "active" ->
-        emit_table(results, baseline["scenarios"], tolerance)
+        emit_table(results, baseline_scenarios, tolerance, enforce: true)
         |> case do
           :ok -> System.halt(0)
           :regressed -> System.halt(1)
@@ -80,34 +84,70 @@ defmodule Bench.Compare do
   end
 
   # ── Pretty-print + regression check ────────────────────────────────────────
+  #
+  # Iterates the UNION of scenario names from results and baseline so neither
+  # schema-drift direction is silent:
+  #   • results-only scenario → "MISSING IN BASELINE" (new harness scenario
+  #     landed without a rebaseline; the regression gate has no anchor for it).
+  #   • baseline-only scenario → "MISSING IN RESULTS" (the harness dropped a
+  #     scenario the baseline still claims; the gate must not silently pass).
+  # Both directions fail-closed when `enforce: true` (active mode) and surface
+  # as informational `scaffold (would fail: ...)` rows when `enforce: false`
+  # (scaffold-placeholder mode) — see docs/perf-contract.md § Schema drift.
 
-  defp emit_table(results, baseline_scenarios, tolerance) do
+  defp emit_table(results, baseline_scenarios, tolerance, opts) do
+    enforce = Keyword.fetch!(opts, :enforce)
+
     # Benchee JSON shape: top-level "statistics" -> per-scenario map.
     stats = Map.get(results, "statistics", %{})
+
+    result_names = stats |> Map.keys() |> MapSet.new()
+    baseline_names = baseline_scenarios |> Map.keys() |> MapSet.new()
+    all_names = result_names |> MapSet.union(baseline_names) |> Enum.sort()
 
     IO.puts("| Scenario | p50 (µs) | p95 (µs) | p99 (µs) | Status |")
     IO.puts("|----------|----------|----------|----------|--------|")
 
-    Enum.reduce(stats, :ok, fn {name, scenario_stats}, acc ->
-      p50 = percentile_us(scenario_stats, "50")
-      p95 = percentile_us(scenario_stats, "95")
-      p99 = percentile_us(scenario_stats, "99")
+    Enum.reduce(all_names, :ok, fn name, acc ->
+      in_results = MapSet.member?(result_names, name)
+      in_baseline = MapSet.member?(baseline_names, name)
 
-      status =
-        case baseline_scenarios do
-          nil ->
-            "scaffold"
+      {p50, p95, p99} =
+        if in_results do
+          scenario_stats = Map.fetch!(stats, name)
 
-          map ->
-            base = Map.get(map, name)
-            check_regression(base, p50, p95, p99, tolerance)
+          {percentile_us(scenario_stats, "50"), percentile_us(scenario_stats, "95"),
+           percentile_us(scenario_stats, "99")}
+        else
+          {nil, nil, nil}
         end
 
-      IO.puts("| #{name} | #{fmt(p50)} | #{fmt(p95)} | #{fmt(p99)} | #{status} |")
+      {raw_status, drift?} =
+        cond do
+          in_results and not in_baseline ->
+            {"MISSING IN BASELINE", true}
+
+          in_baseline and not in_results ->
+            {"MISSING IN RESULTS", true}
+
+          true ->
+            base = Map.fetch!(baseline_scenarios, name)
+            regressed? = check_regression(base, p50, p95, p99, tolerance) == "REGRESSED"
+            {if(regressed?, do: "REGRESSED", else: "ok"), regressed?}
+        end
+
+      display_status =
+        cond do
+          enforce -> raw_status
+          drift? -> "scaffold (would fail: #{raw_status})"
+          true -> "scaffold"
+        end
+
+      IO.puts("| #{name} | #{fmt(p50)} | #{fmt(p95)} | #{fmt(p99)} | #{display_status} |")
 
       cond do
         acc == :regressed -> :regressed
-        status == "REGRESSED" -> :regressed
+        enforce and drift? -> :regressed
         true -> acc
       end
     end)
@@ -126,8 +166,6 @@ defmodule Bench.Compare do
   defp fmt(n) when is_float(n), do: :erlang.float_to_binary(n, decimals: 2)
   defp fmt(n), do: to_string(n)
 
-  defp check_regression(nil, _, _, _, _), do: "no baseline"
-
   defp check_regression(base, p50, p95, p99, tolerance) do
     bp50 = num(base["p50_us"])
     bp95 = num(base["p95_us"])
@@ -138,8 +176,8 @@ defmodule Bench.Compare do
     t99 = Map.get(tolerance, "p99_max_ratio", 1.50)
 
     breached =
-      (bp50 && p50 && p50 > bp50 * t50) or
-        (bp95 && p95 && p95 > bp95 * t95) or
+      (bp50 && p50 && p50 > bp50 * t50) ||
+        (bp95 && p95 && p95 > bp95 * t95) ||
         (bp99 && p99 && p99 > bp99 * t99)
 
     if breached, do: "REGRESSED", else: "ok"
