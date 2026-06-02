@@ -81,6 +81,32 @@ The CI gate (`.github/workflows/perf-regression.yml`) fails a PR when
 Tolerances are looser as the percentile gets noisier — Phase D-4 will
 tighten these once intra-run variance is characterised.
 
+## Schema drift
+
+The comparator iterates the **union** of scenario names from
+`bench/results.json` and `bench/baseline.json`. Either direction of
+schema drift fails the build in `active` mode:
+
+- **`MISSING IN BASELINE`** — a scenario in `results.json` (the harness
+  just emitted it) has no entry in `baseline.json`. A new scenario
+  landed without a rebaseline; the gate has no anchor for it and
+  cannot meaningfully report regression. Rebaseline before merging.
+- **`MISSING IN RESULTS`** — a scenario in `baseline.json` is absent
+  from `results.json` (the harness skipped or dropped it). Either the
+  harness regressed silently, or a scenario was removed without
+  rebaselining the file. The gate must not silently pass.
+
+Both directions are surfaced inline in the markdown table (in the
+`Status` column). In `scaffold-placeholder` mode they appear as
+informational `scaffold (would fail: MISSING IN BASELINE)` /
+`scaffold (would fail: MISSING IN RESULTS)` rows so a rebaseline PR
+previews the eventual active-mode verdict before the gate is armed;
+the build still passes. In `active` mode they appear as bare
+`MISSING IN BASELINE` / `MISSING IN RESULTS` and exit the comparator
+with status 1. Behaviour pivots on the single `_status` flag in
+`bench/baseline.json` — no code change is needed to arm the schema
+checks once the gate goes live.
+
 ## Baseline lifecycle
 
 The baseline lives in `bench/baseline.json`. Its `_status` field gates
