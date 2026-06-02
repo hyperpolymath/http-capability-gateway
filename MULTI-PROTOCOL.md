@@ -1,3 +1,7 @@
+<!--
+SPDX-License-Identifier: MPL-2.0
+Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+-->
 # Multi-Protocol API Gateway
 
 > **⚠️ SCOPE NOTICE (2026-04-16):** This document describes the vision for

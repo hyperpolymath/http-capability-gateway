@@ -1,3 +1,7 @@
+<!--
+SPDX-License-Identifier: MPL-2.0
+Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+-->
 # Formal Proofs TODO - Idris2 ABI
 
 This document outlines the formal proof obligations that would be completed for a production-ready ABI.

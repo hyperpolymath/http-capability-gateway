@@ -1,3 +1,7 @@
+<!--
+SPDX-License-Identifier: MPL-2.0
+Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+-->
 # ABI Layer - Idris2 Interface Definitions
 
 This directory contains formal interface definitions for the multi-protocol gateway using Idris2 with dependent types.

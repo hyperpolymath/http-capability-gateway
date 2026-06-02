@@ -1,3 +1,7 @@
+<!--
+SPDX-License-Identifier: MPL-2.0
+Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+-->
 # Zig FFI Layer - Protocol Implementations
 
 This directory contains Zig implementations of protocol parsers that conform to the Idris2 ABI defined in `src/abi/`.

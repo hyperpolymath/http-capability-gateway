@@ -1,5 +1,7 @@
-<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
-
+<!--
+SPDX-License-Identifier: MPL-2.0
+Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+-->
 # Policy DSL v1 Reference — HTTP Capability Gateway
 
 Complete reference for the YAML-based Policy DSL v1 used by the HTTP Capability

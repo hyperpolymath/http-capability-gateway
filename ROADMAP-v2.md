@@ -1,3 +1,7 @@
+<!--
+SPDX-License-Identifier: MPL-2.0
+Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+-->
 # http-capability-gateway v2.0 Roadmap — HISTORICAL / ASPIRATIONAL
 
 > **⚠️ HISTORICAL DOCUMENT (2026-04-16):** This is an aspirational v2.0 vision

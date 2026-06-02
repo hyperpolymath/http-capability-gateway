@@ -1,5 +1,7 @@
-<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
-
+<!--
+SPDX-License-Identifier: MPL-2.0
+Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+-->
 # Deployment Guide — HTTP Capability Gateway v0.1.0-dev
 
 Practical guide for deploying the HTTP Capability Gateway to production environments.
