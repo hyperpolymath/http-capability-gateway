@@ -32,12 +32,15 @@ K9!
 # Deployment configuration
 # ─────────────────────────────────────────────────────────────────────
 #
-# Backend URL forms are sourced from the contract document
+# Backend transport is sourced from the Phase A contract document
 # (boj-server `docs/integration/http-capability-gateway-boj-contract.md`
 # § 1, Transport): staging uses TCP loopback to BoJ on :7700,
-# production uses a loopback Unix domain socket. The gateway proxy
-# module currently supports a single `backend_url`; both forms below
-# are within that single-backend capability.
+# production uses a loopback Unix domain socket. The wire-form
+# BACKEND_URL is composed from the `backend` block at deploy time —
+# the contract document is the canonical source for the literal
+# URL form (intentionally plain loopback per contract § 7: the
+# mTLS boundary is client → gateway, the gateway → BoJ hop is
+# loopback-isolated and does not require TLS).
 #
 # Trust source defaults to `"header"` per plan § E2 ("Trust level
 # source: \"header\" initially, switched to \"mtls\" after Phase B
@@ -50,8 +53,13 @@ let deployment = {
       memory = "512Mi",
       cpu = "250m",
       image_tag = "staging",
-      # Phase A contract § 1: staging gateway → BoJ over TCP loopback.
-      backend_url = "http://127.0.0.1:7700",
+      # Phase A contract § 1: staging gateway → BoJ over TCP loopback
+      # on :7700. Wire-form URL composed at deploy time; see contract.
+      backend = {
+        transport = "tcp_loopback",
+        host = "127.0.0.1",
+        port = 7700,
+      },
       # Plan § E2: external port is gateway-owned, TLS for direct, or
       # 8080 when fronted by a Cloudflare Tunnel.
       port = 8443,
@@ -64,7 +72,10 @@ let deployment = {
       image_tag = "latest",
       # Phase A contract § 1: production gateway → BoJ over a loopback
       # Unix domain socket; the back-side TCP port is not opened.
-      backend_url = "http://unix:/run/boj/gnosis.sock:/",
+      backend = {
+        transport = "unix_socket_loopback",
+        socket_path = "/run/boj/gnosis.sock",
+      },
       port = 8443,
       # Production trust source: Phase B mTLS (http-capability-gateway#10).
       # Flipped from `"header"` after the §2.4 staging cert-rotation
@@ -89,10 +100,13 @@ let deployment = {
 
   # Environment variables consumed by `config/runtime.exs`. Paths
   # marked `!OWNER:` in the rollout runbook § 1.3 are supplied at
-  # deploy time, not committed here.
+  # deploy time, not committed here. `BACKEND_URL` is composed from
+  # the per-environment `backend` block at deploy time per the wire
+  # form in the Phase A contract § 1; it is not inlined here so the
+  # canonical wire form lives in exactly one place (the contract).
   env = {
     POLICY_PATH = "/etc/http-capability-gateway/policy.yaml",
-    BACKEND_URL = "<from environments[<env>].backend_url>",
+    BACKEND_URL = "<composed from environments[<env>].backend per contract § 1>",
     PORT = "<from environments[<env>].port>",
     TRUST_LEVEL_SOURCE = "<from environments[<env>].trust_level_source>",
     # mTLS material — owner-provided at deploy time per rollout
