@@ -44,7 +44,6 @@
 #   intra-run variance is characterised.
 
 name: Perf Rebaseline
-
 on:
   workflow_dispatch:
     inputs:
@@ -52,23 +51,19 @@ on:
         description: 'Branch or SHA to collect from (default: main)'
         required: false
         default: main
-
 # Deliberately NO concurrency cancel-in-progress here: a workflow_dispatch
 # rebaseline is operator-initiated and serial dispatches should each
 # complete on their own. (perf-regression.yml has cancel-in-progress
 # because PR re-pushes obsolete prior runs; this workflow has no such
 # obsolescence relationship.)
-
 permissions:
   contents: write
   pull-requests: write
-
 jobs:
   rebaseline:
     name: Collect baseline and open PR
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -77,7 +72,6 @@ jobs:
           # PR-creating workflows need fresh history so the branch push
           # carries enough context for the merge-base computation.
           fetch-depth: 0
-
       - name: Setup Elixir/OTP
         uses: erlef/setup-beam@fc68ffb90438ef2936bbb3251622353b3dcb2f93 # v1.18.2
         with:
@@ -85,7 +79,6 @@ jobs:
           # MUST also match perf-regression.yml so numbers are comparable.
           elixir-version: '1.19'
           otp-version: '28'
-
       - name: Cache deps
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
@@ -97,25 +90,20 @@ jobs:
           key: ${{ runner.os }}-perf-${{ hashFiles('mix.lock') }}
           restore-keys: |
             ${{ runner.os }}-perf-
-
       - name: Install deps
         run: |
           mix local.hex --force
           mix local.rebar --force
           mix deps.get
-
       - name: Compile
         run: mix compile --warnings-as-errors
-
       - name: Run bench harness
         run: mix run bench/gateway_latency.exs | tee bench/console.log
-
       - name: Regenerate baseline.json from results.json
         env:
           REBASELINE_RUN_ID: ${{ github.run_id }}
           REBASELINE_RUN_REF: ${{ github.event.inputs.ref }}
         run: mix run bench/rebaseline.exs
-
       - name: Upload bench artefacts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -125,7 +113,6 @@ jobs:
             bench/results.json
             bench/console.log
           retention-days: 30
-
       - name: Open rebaseline PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
