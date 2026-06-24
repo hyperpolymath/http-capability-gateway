@@ -1,5 +1,5 @@
 ;; STATE.a2ml - RSR State File
-;; SPDX-License-Identifier: PMPL-1.0-or-later
+;; SPDX-License-Identifier: MPL-2.0
 ;; Copyright (C) 2026 Jonathan D.A. Jewell
 ;;
 ;; This file tracks the current state of the project using S-expressions.

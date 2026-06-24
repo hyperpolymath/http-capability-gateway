@@ -1,5 +1,5 @@
 ;; PLAYBOOK.a2ml - Operational playbook
-;; SPDX-License-Identifier: PMPL-1.0-or-later
+;; SPDX-License-Identifier: MPL-2.0
 
 (playbook
   (version . "0.1.0")
