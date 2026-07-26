@@ -57,6 +57,7 @@ on:
 # because PR re-pushes obsolete prior runs; this workflow has no such
 # obsolescence relationship.)
 permissions:
+  actions: read
   contents: write
   pull-requests: write
 jobs:
