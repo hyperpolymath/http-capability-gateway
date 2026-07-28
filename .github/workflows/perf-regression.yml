@@ -30,6 +30,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 permissions:
+  actions: read
   contents: read
   pull-requests: write # Required to post the regression-report comment.
 jobs:
