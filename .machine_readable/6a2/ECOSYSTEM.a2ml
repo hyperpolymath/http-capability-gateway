@@ -1,0 +1,12 @@
+;; ECOSYSTEM.a2ml - Project ecosystem positioning
+;; SPDX-License-Identifier: MPL-2.0
+
+(ecosystem
+  (version . "0.1.0")
+  (name . "http-capability-gateway")
+  (type . "component")
+  (purpose . "Part of hyperpolymath ecosystem")
+  (position-in-ecosystem . "supporting")
+  (related-projects
+    ((standards . "parent-standard")))
+)
