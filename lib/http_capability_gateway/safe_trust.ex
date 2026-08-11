@@ -1,5 +1,5 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
-# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 defmodule HttpCapabilityGateway.SafeTrust do
   @moduledoc """
   Formally specified trust hierarchy for capability-based access control.
@@ -182,9 +182,28 @@ defmodule HttpCapabilityGateway.SafeTrust do
       :public
   """
   @spec parse_exposure(String.t() | nil) :: exposure_level()
+  def parse_exposure("public"), do: :public
   def parse_exposure("authenticated"), do: :authenticated
   def parse_exposure("internal"), do: :internal
-  def parse_exposure(_), do: :public
+
+  def parse_exposure(_other) do
+    # Opt-in fail-closed mode for environments where confidentiality is
+    # weighted above availability (e.g., neurophone egress path).
+    #
+    # Default behaviour (back-compat): fail-open to :public.
+    # `:exposure_fail_closed = true`: fail-closed to :internal (most
+    # restrictive level), so a typo in a policy file blocks traffic instead
+    # of silently making a route public.
+    #
+    # Configure via:
+    #
+    #     config :http_capability_gateway, :exposure_fail_closed, true
+    if Application.get_env(:http_capability_gateway, :exposure_fail_closed, false) do
+      :internal
+    else
+      :public
+    end
+  end
 
   @doc """
   Returns the list of valid trust levels in ascending order of privilege.

@@ -1,5 +1,5 @@
--- SPDX-License-Identifier: PMPL-1.0-or-later
--- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+-- SPDX-License-Identifier: MPL-2.0
+-- Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 --
 -- Phase B (standards#97) deliverable B4: the mTLS trust-policy proof
 -- OBLIGATION, stated in Idris2 terms. The proof itself is NOT due in

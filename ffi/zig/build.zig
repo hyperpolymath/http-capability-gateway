@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: PMPL-1.0-or-later
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 // Build script for gateway FFI library
 
 const std = @import("std");
@@ -45,8 +46,14 @@ pub fn build(b: *std.Build) void {
     const grpc_tests = b.addTest(.{
         .root_module = grpc_module,
     });
+    const run_grpc_tests = b.addRunArtifact(grpc_tests);
 
-    const run_tests = b.addRunArtifact(grpc_tests);
+    const main_tests = b.addTest(.{
+        .root_module = lib_module,
+    });
+    const run_main_tests = b.addRunArtifact(main_tests);
+
     const test_step = b.step("test", "Run all tests");
-    test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_grpc_tests.step);
+    test_step.dependOn(&run_main_tests.step);
 }
