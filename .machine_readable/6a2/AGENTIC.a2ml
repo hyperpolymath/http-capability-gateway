@@ -1,0 +1,19 @@
+;; AGENTIC.a2ml - AI agent constraints and capabilities
+;; SPDX-License-Identifier: MPL-2.0
+
+(agentic
+  (version . "0.1.0")
+  (last-updated . "2026-03-16")
+
+  (permissions
+    (can-edit-source . #t)
+    (can-edit-tests . #t)
+    (can-edit-docs . #t)
+    (can-edit-config . #t)
+    (can-create-files . #t))
+
+  (constraints
+    (must-not-use-banned-patterns . #t)
+    (must-not-commit-secrets . #t)
+    (must-not-use-banned-languages . #t))
+)

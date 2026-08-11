@@ -1,5 +1,7 @@
-<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
-
+<!--
+SPDX-License-Identifier: CC-BY-SA-4.0
+Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+-->
 # Scoped Deployment Guide
 
 **Recommendation status:** Required for v0.1.0 — do NOT front the entire

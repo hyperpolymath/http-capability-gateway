@@ -1,4 +1,5 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 defmodule HttpCapabilityGateway.PolicyCompiler do
   @moduledoc """
   Compiles validated policy into fast enforcement rules backed by ETS.
@@ -44,7 +45,8 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
       :stealth_profile, # String profile name or nil
       :narrative,       # Optional explanation string
       :backend,         # Target backend URL
-      :name             # Unique rule name
+      :name,            # Unique rule name
+      :capability       # Optional capability label (e.g., "admin:read"); nil if not set
       ]
 
     @type t :: %__MODULE__{
@@ -53,7 +55,8 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
             verb: atom(),
             exposure: String.t(),
             stealth_profile: String.t() | nil,
-            narrative: String.t() | nil
+            narrative: String.t() | nil,
+            capability: String.t() | nil
           }
   end
 
@@ -355,7 +358,8 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
                 stealth_profile: Map.get(route, "stealth_profile"),
                 narrative: Map.get(route, "narrative"),
                 backend: Map.get(route, "backend"),
-                name: Map.get(route, "name", "route_#{path_pattern}_#{verb_str}")
+                name: Map.get(route, "name", "route_#{path_pattern}_#{verb_str}"),
+                capability: Map.get(route, "capability")
               }
 
               if is_literal do

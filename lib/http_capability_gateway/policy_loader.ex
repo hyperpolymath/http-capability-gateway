@@ -1,5 +1,5 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
-# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 defmodule HttpCapabilityGateway.PolicyLoader do
   @moduledoc """
   Loads Verb Governance Spec (DSL v1) from YAML content, file, or BoJ catalog.

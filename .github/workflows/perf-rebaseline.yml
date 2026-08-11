@@ -1,0 +1,162 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+#
+# perf-rebaseline.yml — Phase D-4 baseline-collection automation
+# (standards#99 of the standards#91 single-lane HCG channel).
+#
+# What it does
+# ────────────
+# Manual workflow_dispatch only. Runs bench/gateway_latency.exs on the
+# published reference target (ubuntu-latest, per docs/perf-contract.md
+# § Targets), pipes bench/results.json through bench/rebaseline.exs to
+# produce a regenerated bench/baseline.json with real p50/p95/p99/ips
+# per scenario, then opens a `perf: rebaseline (standards#99)` PR for
+# maintainer review.
+#
+# Why it exists
+# ─────────────
+# docs/perf-contract.md § Baseline lifecycle defines the rebaseline
+# ritual as `just bench-collect` on a CI-equivalent target. The
+# published reference is ubuntu-latest GHA, but the ritual was authored
+# as a manual local step, which requires an Elixir 1.19 / OTP 28
+# toolchain set up locally on the operator's machine. This workflow
+# moves step 2 of the ritual (the actual collection run) onto the
+# published reference target itself, so the rebaseline can be initiated
+# from any GitHub UI without a local toolchain. The numbers it produces
+# are then comparable to perf-regression.yml's gate, which runs on the
+# same target.
+#
+# The generated PR leaves bench/baseline.json `_status` as
+# "scaffold-placeholder". The maintainer reviews the numbers (steps
+# 3-4 of the ritual) and either flips `_status` → "active" in the same
+# PR (arming perf-regression.yml's gate immediately) or in a follow-up
+# after a confidence-building window. Splitting "land real numbers"
+# from "arm the gate" stays compatible with the runbook's D-4 / D-3
+# checklist split in
+# boj-server/docs/integration/hcg-tier2-rollout-runbook.md § 1.1.
+#
+# What it deliberately does NOT do
+# ────────────────────────────────
+# - Flip `_status` to "active" itself — that's a maintainer judgement
+#   on the noise/spread of the collected numbers, not an automation.
+# - Push directly to main — never; always opens a PR.
+# - Tighten tolerance ratios — also a maintainer judgement once
+#   intra-run variance is characterised.
+
+name: Perf Rebaseline
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or SHA to collect from (default: main)'
+        required: false
+        default: main
+# Deliberately NO concurrency cancel-in-progress here: a workflow_dispatch
+# rebaseline is operator-initiated and serial dispatches should each
+# complete on their own. (perf-regression.yml has cancel-in-progress
+# because PR re-pushes obsolete prior runs; this workflow has no such
+# obsolescence relationship.)
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+jobs:
+  rebaseline:
+    name: Collect baseline and open PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.ref }}
+          # PR-creating workflows need fresh history so the branch push
+          # carries enough context for the merge-base computation.
+          fetch-depth: 0
+      - name: Setup Elixir/OTP
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.18.2
+        with:
+          # Pinned to match .tool-versions; bump both together.
+          # MUST also match perf-regression.yml so numbers are comparable.
+          elixir-version: '1.19'
+          otp-version: '28'
+      - name: Cache deps
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          # Reuse perf-regression.yml's cache key so the first rebaseline
+          # after a perf-regression run primes off the warm cache.
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-perf-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-perf-
+      - name: Install deps
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+      - name: Compile
+        run: mix compile --warnings-as-errors
+      - name: Run bench harness
+        run: mix run bench/gateway_latency.exs | tee bench/console.log
+      - name: Regenerate baseline.json from results.json
+        env:
+          REBASELINE_RUN_ID: ${{ github.run_id }}
+          REBASELINE_RUN_REF: ${{ github.event.inputs.ref }}
+        run: mix run bench/rebaseline.exs
+      - name: Upload bench artefacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: perf-rebaseline-results
+          path: |
+            bench/results.json
+            bench/console.log
+          retention-days: 30
+      - name: Open rebaseline PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          BRANCH="perf/rebaseline-${{ github.run_id }}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -b "$BRANCH"
+          git add bench/baseline.json
+          if git diff --cached --quiet; then
+            echo '::warning::No baseline.json delta from this run — nothing to PR.'
+            exit 0
+          fi
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          git commit -m 'perf: rebaseline (standards#99)' \
+            -m "Auto-collected from \`bench/gateway_latency.exs\` on \`ubuntu-latest\` (the published reference target per \`docs/perf-contract.md\` § Targets)." \
+            -m "Workflow run: $RUN_URL"
+          git push -u origin "$BRANCH"
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title 'perf: rebaseline (standards#99)' \
+            --body "$(cat <<EOF
+          ## Summary
+
+          Auto-generated by \`.github/workflows/perf-rebaseline.yml\` (workflow run [#${{ github.run_id }}]($RUN_URL)). Replaces the scaffold-placeholder TODO values in \`bench/baseline.json\` with real \`p50\` / \`p95\` / \`p99\` / \`ips\` per scenario, collected by \`bench/gateway_latency.exs\` on the published reference target (\`ubuntu-latest\`, per \`docs/perf-contract.md\` § Targets).
+
+          \`Refs hyperpolymath/standards#91\`
+          \`Refs hyperpolymath/standards#99\`
+
+          ## What's in this PR
+
+          - \`bench/baseline.json\`: real per-scenario percentiles + ips; refreshed \`_generated_at\` / \`_generated_by\`.
+          - \`_status\` remains \`scaffold-placeholder\`. The maintainer flips it to \`active\` in this PR (arming the gate immediately) or in a follow-up after a confidence-building window — see \`docs/perf-contract.md\` § Baseline lifecycle.
+          - \`tolerance\` ratios unchanged.
+
+          ## Review checklist
+
+          - [ ] Numbers are within an order of magnitude of expectations for each scenario (sanity).
+          - [ ] Spread looks reasonable (no scenario with p99 >> p95 in a way that suggests a noisy outlier; if so, consider re-running before merging).
+          - [ ] Decide whether to flip \`_status\` → \`active\` here (one-PR D-4 + D-3 close) or in a follow-up (D-4 lands; D-3 flip later).
+
+          Bench artefacts (results.json, console.log) are attached to the workflow run as the \`perf-rebaseline-results\` artefact for 30 days.
+          EOF
+          )"
