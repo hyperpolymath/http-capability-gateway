@@ -65,6 +65,43 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
 
   @valid_http_verbs [:GET, :POST, :PUT, :DELETE, :PATCH, :HEAD, :OPTIONS]
 
+  # Safe verb string to atom conversion with allowlist.
+  #
+  # Never call String.to_existing_atom on user input (policy file contents are
+  # user-controlled at policy authoring time). Instead, use this allowlist-based
+  # converter which returns nil for unknown verbs, preventing both ArgumentError
+  # (DoS) and atom table exhaustion (audit #31, P5).
+  @verb_string_to_atom %{
+    "GET" => :GET,
+    "POST" => :POST,
+    "PUT" => :PUT,
+    "DELETE" => :DELETE,
+    "PATCH" => :PATCH,
+    "HEAD" => :HEAD,
+    "OPTIONS" => :OPTIONS
+  }
+
+  @doc """
+  Safely converts an HTTP verb string to its corresponding atom.
+
+  Returns the atom for valid HTTP methods, or nil for unknown methods.
+  This prevents DoS vectors from String.to_existing_atom (ArgumentError) or
+  String.to_atom (atom table exhaustion).
+
+  ## Parameters
+
+    - verb_str: HTTP method string (e.g., "GET", "POST")
+
+  ## Returns
+
+    - Atom like :GET, :POST, etc. for valid methods
+    - nil for unknown/unsupported methods
+  """
+  @spec safe_verb_atom(String.t()) :: atom() | nil
+  def safe_verb_atom(verb_str) when is_binary(verb_str) do
+    Map.get(@verb_string_to_atom, verb_str)
+  end
+
   @doc """
   Compiles a validated policy into an ETS-backed enforcement table.
 
@@ -291,9 +328,9 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
     global_verbs = get_in(policy, ["governance", "global_verbs"]) || []
 
     Enum.reduce(global_verbs, errors, fn verb_str, acc ->
-      verb_atom = String.to_existing_atom(verb_str)
+      verb_atom = safe_verb_atom(verb_str)
 
-      if verb_atom not in @valid_http_verbs do
+      if is_nil(verb_atom) or verb_atom not in @valid_http_verbs do
         [{:global_verb, "Invalid HTTP verb: #{verb_str}"} | acc]
       else
         # DSL v1: global verbs have no specific exposure level, default to "public"
@@ -344,9 +381,9 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
 
           # Compile each verb for this route
           Enum.reduce(route_verbs, acc, fn verb_str, verb_acc ->
-            verb_atom = String.to_existing_atom(verb_str)
+            verb_atom = safe_verb_atom(verb_str)
 
-            if verb_atom not in @valid_http_verbs do
+            if is_nil(verb_atom) or verb_atom not in @valid_http_verbs do
               [{:route_verb, "Invalid HTTP verb in route: #{verb_str}"} | verb_acc]
             else
               # DSL v1: route-specific verbs override globals
