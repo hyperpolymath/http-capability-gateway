@@ -65,8 +65,8 @@ Both are FOSS with independent governance (no Big Tech).
 ### Enforcement Rules
 
 1. **No new TypeScript files** - Convert existing TS to AffineScript
-2. **No package.json - use deno.json deps** - Use deno.json imports
-3. **No node_modules in production** - Deno caches deps automatically
+2. **No package.json - use bun.json deps** - Use bun.json imports
+3. **No node_modules in production** - Bun caches deps automatically
 4. **No Go code** - Use Rust instead
 5. **No Python anywhere** - Use Julia for data/batch, Rust for systems, AffineScript for apps
 6. **No Kotlin/Swift for mobile** - Use Tauri 2.0+ or Dioxus
