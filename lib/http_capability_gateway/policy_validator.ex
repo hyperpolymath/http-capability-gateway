@@ -1,4 +1,5 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 defmodule HttpCapabilityGateway.PolicyValidator do
   @moduledoc """
   Validates DSL v1 policy structure and content.
@@ -74,7 +75,8 @@ defmodule HttpCapabilityGateway.PolicyValidator do
 
   defp validate_route(route, idx) when is_map(route) do
     with nil <- validate_route_path(route, idx),
-         nil <- validate_route_verbs(route, idx) do
+         nil <- validate_route_verbs(route, idx),
+         nil <- validate_route_capability(route, idx) do
       nil
     else
       error -> error
@@ -82,6 +84,29 @@ defmodule HttpCapabilityGateway.PolicyValidator do
   end
 
   defp validate_route(_route, idx), do: "governance.routes[#{idx}]: must be a map"
+
+  # Validate the optional `capability` field at the route level.
+  #
+  # The capability field is a first-class label that travels with the
+  # route's policy decision. It is the seam where chimichanga-style
+  # capability attenuation (and downstream audit) attach. When present,
+  # it MUST be a non-empty string.
+  #
+  # Allowed shape:
+  #
+  #     - path: "/api/admin"
+  #       verbs: [GET]
+  #       capability: "admin:read"   # optional
+  #
+  # When omitted, the route has no capability label (back-compat with the
+  # existing DSL). When present-but-invalid, validation fails fast.
+  defp validate_route_capability(route, idx) do
+    case Map.get(route, "capability") do
+      nil -> nil
+      cap when is_binary(cap) and cap != "" -> nil
+      _ -> "governance.routes[#{idx}].capability: must be a non-empty string when present"
+    end
+  end
 
   defp validate_route_path(route, idx) do
     case Map.get(route, "path") do

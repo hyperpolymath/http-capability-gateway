@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: MPL-2.0
 # Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
 #
 # perf-regression.yml — Phase D performance regression gate (standards#99)
@@ -17,44 +17,38 @@
 # standards#91 for the single-lane HCG channel ordering.
 
 name: Perf Regression
-
 on:
   pull_request:
     branches: ['**']
   push:
     branches: [main, master]
   workflow_dispatch:
-
 # Estate guardrail (standards#122): cancel superseded runs so re-pushes
 # don't pile up against the account-wide Actions concurrency pool. Safe
 # here because the workflow is read-only (no publish, no mutation).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 permissions:
+  actions: read
   contents: read
-  pull-requests: write  # Required to post the regression-report comment.
-
+  pull-requests: write # Required to post the regression-report comment.
 jobs:
   bench:
     name: Gateway latency benchmark
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup Elixir/OTP
-        uses: erlef/setup-beam@fc68ffb90438ef2936bbb3251622353b3dcb2f93 # v1.18.2
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.18.2
         with:
           # Pinned to match .tool-versions; bump both together.
           elixir-version: '1.19'
           otp-version: '28'
-
       - name: Cache deps
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             deps
@@ -62,29 +56,24 @@ jobs:
           key: ${{ runner.os }}-perf-${{ hashFiles('mix.lock') }}
           restore-keys: |
             ${{ runner.os }}-perf-
-
       - name: Install deps
         run: |
           mix local.hex --force
           mix local.rebar --force
           mix deps.get
-
       - name: Compile
         run: mix compile --warnings-as-errors
-
       - name: Run benchmark harness
         run: mix run bench/gateway_latency.exs | tee bench/console.log
-
       - name: Compare against baseline
         id: compare
         run: |
           # bench/compare.exs writes the markdown table to stdout and
           # exits non-zero on regression (active mode) or zero (scaffold mode).
           mix run bench/compare.exs | tee -a "$GITHUB_STEP_SUMMARY"
-
       - name: Upload bench artefacts
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: perf-regression-results
           path: |

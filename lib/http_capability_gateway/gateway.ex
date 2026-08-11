@@ -1,4 +1,5 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 defmodule HttpCapabilityGateway.Gateway do
   @moduledoc """
   HTTP Gateway implementing verb governance enforcement.
@@ -307,6 +308,17 @@ defmodule HttpCapabilityGateway.Gateway do
           remote_ip: conn.remote_ip |> :inet.ntoa() |> to_string()
         )
 
+        # Persist to the audit ledger so probes for unsupported verbs
+        # (PROPFIND/MKCOL/REPORT/garbage) leave a forensic trail. This was
+        # missing from the audit stream — the most security-relevant path
+        # (unknown verb against an undeclared route) was the one not being
+        # recorded. The verb string is passed as-is (no atom creation);
+        # VeriSimDB stores it verbatim. The "policy_ref" carries a
+        # discriminator so the audit reader can distinguish this case from
+        # a legitimate deny.
+        trust_level = Map.get(conn.assigns, :trust_level, :untrusted)
+        VeriSimDB.audit_deny(path, conn.method, trust_level, "unknown_method:#{conn.method}")
+
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(405, Jason.encode!(%{error: "Method Not Allowed"}))
@@ -386,6 +398,13 @@ defmodule HttpCapabilityGateway.Gateway do
               # No policy rule matches this path+verb combination -- default deny.
               duration_us = System.monotonic_time() - start_time
               log_decision(request_id, path, verb, trust_level, :no_match, nil, duration_us)
+
+              # Persist to the audit ledger as well. The no-match path is
+              # security-relevant (a probe for an undeclared route) and was
+              # previously logged but not persisted. The "policy_ref"
+              # discriminator lets the audit reader filter no-match denials
+              # from explicit-rule denials.
+              VeriSimDB.audit_deny(path, to_string(verb), trust_level, "no_match")
 
               stealth_profiles = Application.get_env(:http_capability_gateway, :stealth_profiles, %{})
               stealth_enabled? = stealth_profiles != %{}

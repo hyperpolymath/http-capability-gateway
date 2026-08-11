@@ -1,3 +1,7 @@
+<!--
+SPDX-License-Identifier: CC-BY-SA-4.0
+Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+-->
 # http-capability-gateway - Implementation Roadmap
 
 > **HISTORICAL DOCUMENT (2026-04-16):** This document was written before any code existed and is no longer accurate. The repository now has 19 Elixir modules, 7 test files, 2 Zig FFI parsers, and 2 Idris2 ABI modules. The "What's Missing" list below is mostly **completed**. See `ROADMAP.adoc` and `STATE.adoc` for the current state.

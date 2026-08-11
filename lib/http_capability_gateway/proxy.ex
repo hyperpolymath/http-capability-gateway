@@ -1,4 +1,5 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 defmodule HttpCapabilityGateway.Proxy do
   @moduledoc """
   HTTP Proxy for forwarding allowed requests to backend services.
@@ -183,9 +184,30 @@ defmodule HttpCapabilityGateway.Proxy do
   defp trust_to_string(level) when is_binary(level), do: level
   defp trust_to_string(_), do: "untrusted"
 
+  # Allowlist for HTTP method -> Req atom, mirroring the gateway's
+  # @valid_methods allowlist (audit #31, P5 defence-in-depth).
+  #
+  # Previously this function called String.to_existing_atom/1 on conn.method.
+  # By the time we reach here, Gateway.safe_verb/1 has already filtered for
+  # the seven supported methods — so to_existing_atom would not crash on
+  # real traffic. But the comment in gateway.ex claims the gateway NEVER
+  # uses to_existing_atom on user input, which was half-true: this
+  # internal path did. We close the gap with an explicit map lookup so
+  # that grep'ing for `to_existing_atom` returns zero hits on any user
+  # input path.
+  @method_atoms %{
+    "get" => :get,
+    "post" => :post,
+    "put" => :put,
+    "delete" => :delete,
+    "patch" => :patch,
+    "head" => :head,
+    "options" => :options
+  }
+
   # Make HTTP request to backend using Req
   defp make_backend_request(method, url, headers, body) do
-    method_atom = method |> String.downcase() |> String.to_existing_atom()
+    method_atom = Map.get(@method_atoms, String.downcase(method), :get)
 
     options = [
       method: method_atom,
