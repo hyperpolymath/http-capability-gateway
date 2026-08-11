@@ -1,4 +1,7 @@
-<!-- SPDX-License-Identifier: PMPL-1.0-or-later -->
+<!--
+SPDX-License-Identifier: CC-BY-SA-4.0
+Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+-->
 <!-- Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk> -->
 
 # Performance Contract
@@ -81,6 +84,32 @@ The CI gate (`.github/workflows/perf-regression.yml`) fails a PR when
 Tolerances are looser as the percentile gets noisier — Phase D-4 will
 tighten these once intra-run variance is characterised.
 
+## Schema drift
+
+The comparator iterates the **union** of scenario names from
+`bench/results.json` and `bench/baseline.json`. Either direction of
+schema drift fails the build in `active` mode:
+
+- **`MISSING IN BASELINE`** — a scenario in `results.json` (the harness
+  just emitted it) has no entry in `baseline.json`. A new scenario
+  landed without a rebaseline; the gate has no anchor for it and
+  cannot meaningfully report regression. Rebaseline before merging.
+- **`MISSING IN RESULTS`** — a scenario in `baseline.json` is absent
+  from `results.json` (the harness skipped or dropped it). Either the
+  harness regressed silently, or a scenario was removed without
+  rebaselining the file. The gate must not silently pass.
+
+Both directions are surfaced inline in the markdown table (in the
+`Status` column). In `scaffold-placeholder` mode they appear as
+informational `scaffold (would fail: MISSING IN BASELINE)` /
+`scaffold (would fail: MISSING IN RESULTS)` rows so a rebaseline PR
+previews the eventual active-mode verdict before the gate is armed;
+the build still passes. In `active` mode they appear as bare
+`MISSING IN BASELINE` / `MISSING IN RESULTS` and exit the comparator
+with status 1. Behaviour pivots on the single `_status` flag in
+`bench/baseline.json` — no code change is needed to arm the schema
+checks once the gate goes live.
+
 ## Baseline lifecycle
 
 The baseline lives in `bench/baseline.json`. Its `_status` field gates
@@ -92,13 +121,35 @@ behaviour:
   requires landing real numbers via a dedicated baseline-collection PR
   (Phase D-4), reviewed for noise/spread by the maintainer.
 
-Updating the baseline is a deliberate act:
+Updating the baseline is a deliberate act. Two paths:
+
+### Automated (preferred — D-4 bootstrap)
+
+Dispatch the **Perf Rebaseline** workflow
+(`.github/workflows/perf-rebaseline.yml`, `workflow_dispatch` only).
+It runs `bench/gateway_latency.exs` on the published reference target
+(`ubuntu-latest`), pipes the result through `bench/rebaseline.exs`
+to regenerate `bench/baseline.json` with real percentiles, and opens
+a `perf: rebaseline (standards#99)` PR for review. `_status` stays
+`scaffold-placeholder` in the generated PR — the maintainer flips it
+to `active` (arming the gate) in the same PR or in a follow-up after
+a confidence-building window.
+
+### Manual (for local previews or operators without GHA access)
 
 1. Open a PR titled `perf: rebaseline (standards#99)`.
-2. Run `just bench-collect` locally on the CI-equivalent target.
+2. Run `just rebaseline` locally on a CI-equivalent target (runs
+   `bench/gateway_latency.exs` then `bench/rebaseline.exs`, which
+   reads `bench/results.json` and writes a regenerated
+   `bench/baseline.json`). Or run `just bench-collect` for the
+   harness only and edit `bench/baseline.json` by hand.
 3. Commit the regenerated `bench/baseline.json`.
 4. Reviewer approves the new numbers (or rejects if the regression is
    real and unjustified). Never silently rebaseline in an unrelated PR.
+
+Either path leaves `_status` as `scaffold-placeholder`. Flipping it to
+`active` is a separate, deliberate decision (it may land in the same
+PR or as a follow-up).
 
 ## Out of scope for Phase D-3
 

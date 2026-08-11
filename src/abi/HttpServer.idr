@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: MPL-2.0
+-- Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 ||| HTTP server FFI — %foreign declarations binding into libgateway.so.
 |||
 ||| Provides a thin, synchronous HTTP/1.1 server suitable for sitting
