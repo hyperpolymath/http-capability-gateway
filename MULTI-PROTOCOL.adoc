@@ -1,25 +1,25 @@
-<!--
-SPDX-License-Identifier: CC-BY-SA-4.0
-Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
--->
-# Multi-Protocol API Gateway
+== Multi-Protocol API Gateway
 
-> **⚠️ SCOPE NOTICE (2026-04-16):** This document describes the vision for
-> multi-protocol support. Today, only **HTTP/REST** is production-ready. gRPC
-> and GraphQL handlers exist but are **stubs**: `GraphQLHandler.check_operation_policy/2`
-> always returns true, and `GRPCHandler.forward_grpc_request/5` returns a
-> hardcoded response with no actual forwarding. Do not route gRPC or GraphQL
-> traffic through this gateway in production.
->
-> See `docs/SUPPORTED-FEATURES.md` for the authoritative status of each
-> protocol, and `ROADMAP.adoc` for the MVP scope.
+____
+*⚠️ SCOPE NOTICE (2026-04-16):* This document describes the vision for
+multi-protocol support. Today, only *HTTP/REST* is production-ready.
+gRPC and GraphQL handlers exist but are *stubs*:
+`+GraphQLHandler.check_operation_policy/2+` always returns true, and
+`+GRPCHandler.forward_grpc_request/5+` returns a hardcoded response with
+no actual forwarding. Do not route gRPC or GraphQL traffic through this
+gateway in production.
 
-The HTTP Capability Gateway aims to support multiple protocols: HTTP/REST, gRPC, and GraphQL.
-Only HTTP/REST is currently supported end-to-end.
+See `+docs/SUPPORTED-FEATURES.md+` for the authoritative status of each
+protocol, and `+ROADMAP.adoc+` for the MVP scope.
+____
 
-## Architecture
+The HTTP Capability Gateway aims to support multiple protocols:
+HTTP/REST, gRPC, and GraphQL. Only HTTP/REST is currently supported
+end-to-end.
 
-```
+=== Architecture
+
+....
 ┌─────────────────────────────────────────────────────────────┐
 │                     Idris2 ABI Layer                        │
 │              (src/abi/Protocol.idr, Types.idr)              │
@@ -50,21 +50,23 @@ Only HTTP/REST is currently supported end-to-end.
 │  │(HTTP)   │ │Handler│ │Handler │ │      │              │
 │  └─────────┘ └──────┘  └────────┘ └──────┘              │
 └────────────────────────────────────────────────────────────┘
-```
+....
 
-## Protocol Detection
+=== Protocol Detection
 
 Automatic protocol detection based on request characteristics:
 
-1. **GraphQL**: POST to `/graphql` endpoint
-2. **gRPC**: HTTP/2 with `content-type: application/grpc*`
-3. **HTTP/REST**: Everything else (default)
+[arabic]
+. *GraphQL*: POST to `+/graphql+` endpoint
+. *gRPC*: HTTP/2 with `+content-type: application/grpc*+`
+. *HTTP/REST*: Everything else (default)
 
-## Configuration
+=== Configuration
 
-Add to `config/config.exs`:
+Add to `+config/config.exs+`:
 
-```elixir
+[source,elixir]
+----
 config :http_capability_gateway,
   # Enable multi-protocol support
   enable_grpc: true,
@@ -77,13 +79,14 @@ config :http_capability_gateway,
   # Policy enforcement
   grpc_methods_policy: "config/grpc-policy.yaml",
   graphql_operations_policy: "config/graphql-policy.yaml"
-```
+----
 
-## Policy Examples
+=== Policy Examples
 
-### gRPC Policy
+==== gRPC Policy
 
-```yaml
+[source,yaml]
+----
 # config/grpc-policy.yaml
 dsl_version: "1"
 
@@ -102,11 +105,12 @@ grpc_methods:
   - service: "myapp.AdminService"
     method: "*"  # All methods
     exposure: "internal"
-```
+----
 
-### GraphQL Policy
+==== GraphQL Policy
 
-```yaml
+[source,yaml]
+----
 # config/graphql-policy.yaml
 dsl_version: "1"
 
@@ -123,13 +127,15 @@ graphql:
   blocked_operations:
     - "AdminMutation"
     - "DangerousQuery"
-```
+----
 
-## Building FFI Layer
+=== Building FFI Layer
 
-The Zig FFI layer must be compiled before the gateway can handle gRPC/GraphQL:
+The Zig FFI layer must be compiled before the gateway can handle
+gRPC/GraphQL:
 
-```bash
+[source,bash]
+----
 cd ffi/zig
 zig build
 
@@ -138,11 +144,12 @@ zig build test
 
 # Install library
 sudo cp zig-out/lib/libgateway.so /usr/local/lib/
-```
+----
 
-## Testing
+=== Testing
 
-```bash
+[source,bash]
+----
 # Test gRPC endpoint
 grpcurl -plaintext -d '{"service":"health"}' localhost:4000 grpc.health.v1.Health/Check
 
@@ -153,29 +160,28 @@ curl -X POST http://localhost:4000/graphql \
 
 # Test HTTP/REST (existing)
 curl http://localhost:4000/api/users
-```
+----
 
-## Performance
+=== Performance
 
-Protocol parsing performance (Zig FFI):
-- **gRPC**: ~5μs per request
-- **GraphQL**: ~10μs per query
-- **HTTP**: ~2μs per request
+Protocol parsing performance (Zig FFI): - *gRPC*: ~5μs per request -
+*GraphQL*: ~10μs per query - *HTTP*: ~2μs per request
 
 All parsers are memory-safe with zero-copy parsing where possible.
 
-## Security
+=== Security
 
-- **Type Safety**: Idris2 dependent types prove correctness
-- **Memory Safety**: Zig compile-time checks prevent buffer overflows
-- **Policy Enforcement**: All protocols subject to verb governance
-- **Stealth Mode**: Supported for all protocols (custom error codes)
+* *Type Safety*: Idris2 dependent types prove correctness
+* *Memory Safety*: Zig compile-time checks prevent buffer overflows
+* *Policy Enforcement*: All protocols subject to verb governance
+* *Stealth Mode*: Supported for all protocols (custom error codes)
 
-## Limitations
+=== Limitations
 
-Current implementation is in **beta**:
-- gRPC: HTTP/2 frame parsing stub (TODO: full HPACK decoder)
-- GraphQL: Basic operation detection (TODO: full AST parsing)
-- Policy integration: Stubs in place (TODO: wire to PolicyCompiler)
+Current implementation is in *beta*: - gRPC: HTTP/2 frame parsing stub
+(TODO: full HPACK decoder) - GraphQL: Basic operation detection (TODO:
+full AST parsing) - Policy integration: Stubs in place (TODO: wire to
+PolicyCompiler)
 
-See `ffi/zig/README.md` and `src/abi/README.md` for implementation details.
+See `+ffi/zig/README.md+` and `+src/abi/README.md+` for implementation
+details.
