@@ -58,7 +58,7 @@ on:
 # obsolescence relationship.)
 permissions:
   actions: read
-  contents: write
+  contents: read
   pull-requests: write
 jobs:
   rebaseline:
