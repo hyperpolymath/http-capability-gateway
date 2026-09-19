@@ -3,22 +3,21 @@
 git clone https://github.com/hyperpolymath/http-capability-gateway.git
 cd http-capability-gateway
 
-# Using Guix (recommended for reproducibility)
-
-guix develop
-
-# Or using toolbox/distrobox
+# Using Toolbox
 
 toolbox create http-capability-gateway-dev
 toolbox enter http-capability-gateway-dev
+
 # Install dependencies manually
+
+mix deps.get
 
 # Verify setup
 
-just check   # or: cargo check / mix compile / etc.
+just validate   # or: cargo check / mix compile / etc.
 just test    # Run test suite
 
-### Repository Structure
+## Repository Structure
 
 ```text
 http-capability-gateway/
@@ -49,7 +48,7 @@ http-capability-gateway/
 └── Justfile # Task runner (Perimeter 1)
 ```
 
-    ---
+---
 
 ## How to Contribute
 
@@ -101,21 +100,27 @@ http-capability-gateway/
 
 ### Branch Naming
 
-docs/short-description # Documentation (P3) test/what-added # Test
-additions (P3) feat/short-description # New features (P2)
-fix/issue-number-description # Bug fixes (P2) refactor/what-changed #
-Code improvements (P2) security/what-fixed # Security fixes (P1-2)
+```text
+docs/short-description # Documentation (P3)
+test/what-added # Test additions (P3)
+feat/short-description # New features (P2)
+fix/issue-number-description # Bug fixes (P2)
+refactor/what-changed # Code improvements (P2)
+security/what-fixed # Security fixes (P1-2)
+```
 
 
 ### Commit Messages
 
-    We follow [Conventional Commits](https://www.conventionalcommits.org/):
+We follow [Conventional Commits](https://www.conventionalcommits.org/):
 
+```text
 type(scope): description
 
 Body: what changed and why.
 
 Footer: issue reference, e.g. Closes #123
-\[optional body\]
+[optional body]
 
-\[optional footer\]
+[optional footer]
+```
