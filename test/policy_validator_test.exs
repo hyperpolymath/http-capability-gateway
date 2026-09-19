@@ -73,7 +73,7 @@ defmodule HttpCapabilityGateway.PolicyValidatorTest do
       assert reason =~ "global_verbs"
     end
 
-    test "rejects policy with empty global_verbs" do
+    test "accepts explicitly empty globals as deny-default" do
       invalid_policy = %{
         "dsl_version" => "1",
         "governance" => %{
@@ -81,8 +81,7 @@ defmodule HttpCapabilityGateway.PolicyValidatorTest do
         }
       }
 
-      assert {:error, reason} = PolicyValidator.validate(invalid_policy)
-      assert reason =~ "global_verbs" or reason =~ "empty"
+      assert :ok = PolicyValidator.validate(invalid_policy)
     end
 
     test "rejects invalid HTTP verbs" do

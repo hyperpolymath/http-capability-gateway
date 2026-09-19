@@ -19,9 +19,17 @@ defmodule HttpCapabilityGateway.GatewayTest do
       "governance" => %{
         "global_verbs" => ["GET", "POST"],
         "routes" => [
-          %{"path" => "/api/users", "verbs" => ["GET", "POST"], "backend" => "http://localhost:8080"},
+          %{
+            "path" => "/api/users",
+            "verbs" => ["GET", "POST"],
+            "backend" => "http://localhost:8080"
+          },
           %{"path" => "/api/admin", "verbs" => ["GET"], "backend" => "http://localhost:8080"},
-          %{"path" => "/api/users/[0-9]+", "verbs" => ["GET", "PUT", "DELETE"], "backend" => "http://localhost:8080"}
+          %{
+            "path" => "/api/users/[0-9]+",
+            "verbs" => ["GET", "PUT", "DELETE"],
+            "backend" => "http://localhost:8080"
+          }
         ]
       },
       "stealth" => %{
@@ -32,6 +40,7 @@ defmodule HttpCapabilityGateway.GatewayTest do
 
     {:ok, table} = PolicyCompiler.compile(policy, delete_old: false)
     Application.put_env(:http_capability_gateway, :policy_table, table)
+
     Application.put_env(:http_capability_gateway, :stealth_profiles, %{
       "default" => %{
         "unauthenticated" => 404,
@@ -39,6 +48,7 @@ defmodule HttpCapabilityGateway.GatewayTest do
         "untrusted" => 404
       }
     })
+
     {:ok, table: table}
   end
 
@@ -69,11 +79,8 @@ defmodule HttpCapabilityGateway.GatewayTest do
     end
 
     test "denies verbs not allowed for route" do
-      # /api/admin only allows GET. POST is global, so it should be allowed!
-      # Wait, our logic says fallback to global if route doesn't match verb.
-      # So we test that.
       conn = conn(:post, "/api/admin") |> Gateway.call([])
-      assert_allowed(conn)
+      assert_denied(conn, 404)
     end
 
     test "handles regex route matching" do
@@ -121,20 +128,23 @@ defmodule HttpCapabilityGateway.GatewayTest do
       assert conn.status == 404
     end
   end
-describe "stealth disabled" do
-  setup %{table: _table} do
-    policy = %{
-      "dsl_version" => "1",
-      "governance" => %{
-        "global_verbs" => ["GET"],
-        "stealth" => %{"enabled" => false, "status_code" => 403}
+
+  describe "stealth disabled" do
+    setup %{table: _table} do
+      policy = %{
+        "dsl_version" => "1",
+        "governance" => %{
+          "global_verbs" => ["GET"],
+          "stealth" => %{"enabled" => false, "status_code" => 403}
+        }
       }
-    }
-    {:ok, table} = PolicyCompiler.compile(policy, delete_old: false)
-    Application.put_env(:http_capability_gateway, :policy_table, table)
-    Application.put_env(:http_capability_gateway, :stealth_profiles, %{})
-    :ok
-  end
+
+      {:ok, table} = PolicyCompiler.compile(policy, delete_old: false)
+      Application.put_env(:http_capability_gateway, :policy_table, table)
+      Application.put_env(:http_capability_gateway, :stealth_profiles, %{})
+      :ok
+    end
+
     test "returns 403 when stealth disabled" do
       conn = conn(:post, "/any") |> Gateway.call([])
       assert_denied(conn, 403)
@@ -143,9 +153,11 @@ describe "stealth disabled" do
 
   describe "trust level evaluation" do
     test "extracts trust level from header" do
-      conn = conn(:get, "/api/admin")
-             |> put_req_header("x-trust-level", "authenticated")
-             |> Gateway.call([])
+      conn =
+        conn(:get, "/api/admin")
+        |> put_req_header("x-trust-level", "authenticated")
+        |> Gateway.call([])
+
       assert conn.assigns[:trust_level] == :authenticated
     end
 
@@ -162,9 +174,11 @@ describe "stealth disabled" do
     end
 
     test "preserves existing request ID" do
-      conn = conn(:get, "/api/users")
-             |> put_req_header("x-request-id", "test-id")
-             |> Gateway.call([])
+      conn =
+        conn(:get, "/api/users")
+        |> put_req_header("x-request-id", "test-id")
+        |> Gateway.call([])
+
       assert conn.assigns[:request_id] == "test-id"
     end
   end
@@ -196,8 +210,11 @@ describe "stealth disabled" do
       # Plug.Test.conn uses lowercase internally if passed as string, 
       # but Gateway expects uppercase.
       conn = conn(:get, "/api/admin")
-      conn = %{conn | method: "get"}
-             |> Gateway.call([])
+
+      conn =
+        %{conn | method: "get"}
+        |> Gateway.call([])
+
       # Should fail because "get" != "GET"
       assert_denied(conn, 405)
     end

@@ -10,6 +10,7 @@ defmodule HttpCapabilityGateway.PolicyPropertyTest do
 
   defp is_allowed?(table, path, verb) do
     verb_atom = if is_binary(verb), do: String.to_existing_atom(verb), else: verb
+
     case PolicyCompiler.lookup(table, path, verb_atom) do
       {:ok, _rule} -> true
       {:error, :no_match} -> false
@@ -93,7 +94,7 @@ defmodule HttpCapabilityGateway.PolicyPropertyTest do
             "global_verbs" => Enum.uniq(global_verbs),
             "routes" => [
               %{
-                "path" => full_path, 
+                "path" => full_path,
                 "verbs" => Enum.uniq(route_verbs),
                 "backend" => "http://localhost:8080"
               }
@@ -108,13 +109,11 @@ defmodule HttpCapabilityGateway.PolicyPropertyTest do
           assert is_allowed?(table, full_path, verb)
         end
 
-        # Verbs NOT in route config should be checked against globals
-        # (Wait, the current implementation falls back to global if route doesn't match VERB)
-        # So we test that logic.
+        # Matched route verb lists override globals, including denials.
         other_verbs = @valid_http_verbs -- route_verbs
 
         for verb <- other_verbs do
-          expected = verb in global_verbs
+          expected = false
           assert is_allowed?(table, full_path, verb) == expected
         end
       end

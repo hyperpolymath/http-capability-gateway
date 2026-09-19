@@ -110,7 +110,7 @@ defmodule HttpCapabilityGateway.E2EPropertyTest do
 
     case route_match do
       nil -> globals
-      %{"verbs" => verbs} -> verbs ++ globals
+      %{"verbs" => verbs} -> verbs
     end
   end
 

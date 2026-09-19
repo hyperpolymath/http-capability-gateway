@@ -5,14 +5,14 @@ defmodule HttpCapabilityGateway.Proxy do
   HTTP Proxy for forwarding allowed requests to backend services.
 
   Forwards requests that pass policy enforcement to configured backend URLs.
-  Handles request transformation, response streaming, and error handling.
+  Handles bounded request buffering, raw response buffering, and error handling.
 
   ## Features
 
   - Method preservation (GET, POST, PUT, DELETE, etc.)
   - Header forwarding (with filtering)
-  - Request body streaming
-  - Response body streaming
+  - Bounded request body buffering
+  - Raw response body buffering (not streaming or a heap quota)
   - Timeout handling
   - Connection pooling (via Req)
 
@@ -74,28 +74,38 @@ defmodule HttpCapabilityGateway.Proxy do
       rule_exposure: rule.exposure
     )
 
-    # Read request body if present
-    {:ok, body, conn} = Plug.Conn.read_body(conn)
+    limit = Application.get_env(:http_capability_gateway, :max_request_body_bytes, 1_048_576)
 
-    # Build headers for backend request
-    headers = build_backend_headers(conn)
+    case Plug.Conn.read_body(conn,
+           length: limit,
+           read_length: min(limit, 64_000),
+           read_timeout: 5_000
+         ) do
+      {:ok, body, conn} when byte_size(body) <= limit ->
+        headers = build_backend_headers(conn)
 
-    # Make backend request using Req
-    case make_backend_request(conn.method, target_url, headers, body) do
-      {:ok, response} ->
-        # Forward backend response to client
-        send_backend_response(conn, response)
+        case make_backend_request(conn.method, target_url, headers, body) do
+          {:ok, response} ->
+            send_backend_response(conn, response)
 
-      {:error, reason} ->
-        # Backend request failed
-        Logger.error("Backend request failed", error: inspect(reason))
+          {:error, reason} ->
+            Logger.error("Backend request failed", error: inspect(reason))
 
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.send_resp(
+              502,
+              Jason.encode!(%{error: "Bad Gateway", message: "Backend service unavailable"})
+            )
+        end
+
+      {:error, _} ->
+        Plug.Conn.send_resp(conn, 400, "Invalid request body")
+
+      {_, _body, conn} ->
         conn
-        |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.send_resp(502, Jason.encode!(%{
-          error: "Bad Gateway",
-          message: "Backend service unavailable"
-        }))
+        |> Plug.Conn.put_resp_header("connection", "close")
+        |> Plug.Conn.send_resp(413, "Payload Too Large")
     end
   end
 
@@ -214,8 +224,14 @@ defmodule HttpCapabilityGateway.Proxy do
       url: url,
       headers: headers,
       body: body,
-      receive_timeout: 30_000,  # 30 second timeout
-      retry: false  # Don't retry - let caller handle failures
+      # 30 second timeout
+      receive_timeout: 30_000,
+      # Never repeat writes.
+      retry: false,
+      # Never follow a backend redirect across the configured boundary.
+      redirect: false,
+      # Preserve wire bytes; no JSON decoding or implicit decompression.
+      raw: true
     ]
 
     case Req.request(options) do
@@ -235,15 +251,17 @@ defmodule HttpCapabilityGateway.Proxy do
     # Set response status
     conn = Plug.Conn.put_status(conn, backend_response.status)
 
-    # Forward response headers (filter hop-by-hop)
-    conn =
-      Enum.reduce(backend_response.headers, conn, fn {name, value}, acc ->
-        if String.downcase(name) not in @hop_by_hop_headers do
-          Plug.Conn.put_resp_header(acc, String.downcase(name), value)
-        else
-          acc
-        end
-      end)
+    # Req 0.5 stores header values as lists, while Plug expects individual
+    # binary values. Preserve repeated Set-Cookie headers; never decode JSON.
+    headers =
+      for {name, values} <- backend_response.headers,
+          String.downcase(name) not in @hop_by_hop_headers,
+          value <- List.wrap(values),
+          do: {String.downcase(name), value}
+
+    names = MapSet.new(Enum.map(headers, &elem(&1, 0)))
+    retained = Enum.reject(conn.resp_headers, fn {name, _} -> MapSet.member?(names, name) end)
+    conn = %{conn | resp_headers: retained ++ headers}
 
     # Send response body
     Plug.Conn.send_resp(conn, conn.status, backend_response.body)

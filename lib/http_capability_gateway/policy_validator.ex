@@ -28,6 +28,7 @@ defmodule HttpCapabilityGateway.PolicyValidator do
   end
 
   defp validate_dsl_version(%{"dsl_version" => "1"}), do: nil
+
   defp validate_dsl_version(%{"dsl_version" => other}) when is_binary(other),
     do: "dsl_version: must be \"1\""
 
@@ -45,19 +46,15 @@ defmodule HttpCapabilityGateway.PolicyValidator do
   defp validate_governance(_), do: "governance: must be a map"
 
   defp validate_global_verbs(%{"global_verbs" => verbs}) when is_list(verbs) do
-    cond do
-      verbs == [] ->
-        "governance.global_verbs: must not be empty"
-
-      invalid = Enum.find(verbs, &(&1 not in @valid_http_verbs)) ->
-        "Invalid HTTP verb: #{invalid}"
-
-      true ->
-        nil
+    if Enum.all?(verbs, &(&1 in @valid_http_verbs)) do
+      nil
+    else
+      "governance.global_verbs: contains an invalid HTTP verb"
     end
   end
 
-  defp validate_global_verbs(_), do: "governance.global_verbs: must be a non-empty list"
+  defp validate_global_verbs(_),
+    do: "governance.global_verbs: must be a list (empty denies unmatched routes)"
 
   defp validate_routes(nil), do: nil
 
@@ -76,7 +73,8 @@ defmodule HttpCapabilityGateway.PolicyValidator do
   defp validate_route(route, idx) when is_map(route) do
     with nil <- validate_route_path(route, idx),
          nil <- validate_route_verbs(route, idx),
-         nil <- validate_route_capability(route, idx) do
+         nil <- validate_route_capability(route, idx),
+         nil <- validate_route_exposure(route, idx) do
       nil
     else
       error -> error
@@ -108,6 +106,14 @@ defmodule HttpCapabilityGateway.PolicyValidator do
     end
   end
 
+  defp validate_route_exposure(route, idx) do
+    case Map.fetch(route, "exposure") do
+      :error -> nil
+      {:ok, value} when value in ["public", "authenticated", "internal"] -> nil
+      _ -> "governance.routes[#{idx}].exposure: must be public, authenticated, or internal"
+    end
+  end
+
   defp validate_route_path(route, idx) do
     case Map.get(route, "path") do
       nil ->
@@ -127,9 +133,10 @@ defmodule HttpCapabilityGateway.PolicyValidator do
   defp validate_route_verbs(route, idx) do
     case Map.get(route, "verbs") do
       verbs when is_list(verbs) and verbs != [] ->
-        case Enum.find(verbs, &(&1 not in @valid_http_verbs)) do
-          nil -> nil
-          invalid -> "governance.routes[#{idx}].verbs: invalid HTTP verb #{invalid}"
+        if Enum.all?(verbs, &(&1 in @valid_http_verbs)) do
+          nil
+        else
+          "governance.routes[#{idx}].verbs: invalid HTTP verb"
         end
 
       verbs when is_list(verbs) ->
@@ -175,5 +182,6 @@ defmodule HttpCapabilityGateway.PolicyValidator do
     "stealth.enabled: must be a boolean when stealth is defined"
   end
 
-  defp validate_stealth_config(_), do: "stealth: must be a map with 'enabled' and 'status_code' keys"
+  defp validate_stealth_config(_),
+    do: "stealth: must be a map with 'enabled' and 'status_code' keys"
 end

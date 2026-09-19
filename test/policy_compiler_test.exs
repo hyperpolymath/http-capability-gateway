@@ -11,7 +11,11 @@ defmodule HttpCapabilityGateway.PolicyCompilerTest do
         "governance" => %{
           "global_verbs" => ["GET", "POST"],
           "routes" => [
-            %{"path" => "/api/users", "verbs" => ["GET", "POST", "DELETE"], "backend" => "http://localhost:8080"}
+            %{
+              "path" => "/api/users",
+              "verbs" => ["GET", "POST", "DELETE"],
+              "backend" => "http://localhost:8080"
+            }
           ]
         }
       }
@@ -31,6 +35,7 @@ defmodule HttpCapabilityGateway.PolicyCompilerTest do
       assert {:ok, table} = PolicyCompiler.compile(policy, delete_old: false)
 
       rules = :ets.tab2list(table)
+
       global_verbs =
         rules
         |> Enum.filter(fn {{key, _v}, _rule} -> key == :global end)
@@ -49,7 +54,11 @@ defmodule HttpCapabilityGateway.PolicyCompilerTest do
           "global_verbs" => ["GET", "POST"],
           "routes" => [
             %{"path" => "/api/admin", "verbs" => ["GET"], "backend" => "http://localhost:8080"},
-            %{"path" => "/api/users/[0-9]+", "verbs" => ["GET", "PUT", "DELETE"], "backend" => "http://localhost:8080"}
+            %{
+              "path" => "/api/users/[0-9]+",
+              "verbs" => ["GET", "PUT", "DELETE"],
+              "backend" => "http://localhost:8080"
+            }
           ]
         }
       }
@@ -75,10 +84,8 @@ defmodule HttpCapabilityGateway.PolicyCompilerTest do
       assert rule.path_pattern == "/api/users/[0-9]+"
     end
 
-    test "falls back to global verb if route doesn't match verb", %{table: table} do
-      # /api/admin only specifies GET, but POST is global
-      assert {:ok, rule} = PolicyCompiler.lookup(table, "/api/admin", :POST)
-      assert rule.name == "global_POST"
+    test "denies a missing route verb even when it is globally allowed", %{table: table} do
+      assert {:error, :no_match} = PolicyCompiler.lookup(table, "/api/admin", :POST)
     end
 
     test "returns error for non-global verb on unspecified route", %{table: table} do
