@@ -47,17 +47,18 @@ defmodule HttpCapabilityGateway.Logging do
     - `metadata` - Optional additional metadata map
   """
   def log_request_received(request_id, conn, metadata \\ %{}) do
-    log_data = %{
-      event: "gateway.request.received",
-      request_id: request_id,
-      method: conn.method,
-      path: conn.request_path,
-      query_string: conn.query_string,
-      remote_ip: format_ip(conn.remote_ip),
-      user_agent: get_header(conn, "user-agent"),
-      trust_level: get_header(conn, "x-trust-level") || "untrusted"
-    }
-    |> Map.merge(metadata)
+    log_data =
+      %{
+        event: "gateway.request.received",
+        request_id: request_id,
+        method: conn.method,
+        path: conn.request_path,
+        query_string: conn.query_string,
+        remote_ip: format_ip(conn.remote_ip),
+        user_agent: get_header(conn, "user-agent"),
+        trust_level: get_header(conn, "x-trust-level") || "untrusted"
+      }
+      |> Map.merge(metadata)
 
     Logger.info("Request received", log_data)
 
@@ -297,11 +298,17 @@ defmodule HttpCapabilityGateway.Logging do
     - `metadata` - Optional metadata (service name, rules count, etc.)
   """
   def log_policy_load(policy_path, result, metadata \\ %{}) do
+    result_tag =
+      case result do
+        :ok -> :ok
+        {:error, _} -> :error
+      end
+
     log_data =
       %{
         event: "gateway.policy.load",
         policy_path: policy_path,
-        result: elem(result, 0)
+        result: result_tag
       }
       |> Map.merge(metadata)
 
@@ -316,7 +323,7 @@ defmodule HttpCapabilityGateway.Logging do
     :telemetry.execute(
       [:http_capability_gateway, :policy, :load],
       %{count: 1},
-      %{result: elem(result, 0)}
+      %{result: result_tag}
     )
   end
 

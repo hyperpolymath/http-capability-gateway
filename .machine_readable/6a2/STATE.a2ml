@@ -7,15 +7,24 @@
 (state
   (version . "0.1.0-dev")
   (phase . "Pre-release verification")
-  (updated . "2026-04-16")
+  (updated . "2026-09-19")
   (status . "active")
+
+  (local-ordered-checkpoint
+    (status . "Uncommitted strict-policy and unary-proxy corrections; not upstream or deployed")
+    (baseline . "19b343c1e9b7c61668c60887369783d12a486f41")
+    (targeted . "6 properties and 66 tests pass, plus real gateway to Julia JSON integration")
+    (full-suite . "seed 1: 12 properties, 263 tests, 15 failures; all 15 reproduce on baseline plus two necessary plugin compilation repairs")
+    (blockers . "Full suite red; Cowboy/Cowlib/Mint advisories; inactive plugin API warnings; container/TLS/reload/performance acceptance unrun")
+    (scope . "Matched path owns allowed verbs; empty globals deny unknown paths; regex ambiguity denies; raw bounded unary proxy; startup logging and ETS initialization repaired"))
 
   (project
     (name . "http-capability-gateway")
     ;; 19 Elixir modules implemented, 7 unit test files, 2 Zig FFI parsers,
     ;; 2 Idris2 ABI modules. Core gateway, policy pipeline, rate limiter,
     ;; circuit breaker, and proxy are functional. CRG grade C achieved.
-    ;; Blockers: zero security tests, zero E2E tests, zero benchmarks.
+    ;; Historical percentage/grade are not release acceptance. Current blockers
+    ;; and executed test evidence are recorded in local-ordered-checkpoint above.
     (completion . 55)
     (crg-grade . "C")
     (crg-date . "2026-04-04"))

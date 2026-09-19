@@ -35,6 +35,10 @@ defmodule HttpCapabilityGateway.Application do
         # Store policy table in application environment
         Application.put_env(:http_capability_gateway, :policy_table, policy_table)
 
+        # Own hot-path tables for the application lifetime, before opening sockets.
+        HttpCapabilityGateway.K9Contract.init()
+        HttpCapabilityGateway.RateLimiter.init([])
+
         # Start HTTP server and other children
         port = Application.get_env(:http_capability_gateway, :port, 4000)
 
@@ -115,7 +119,8 @@ defmodule HttpCapabilityGateway.Application do
   #     refuses to start. We never silently downgrade an mTLS deployment to
   #     the forgeable header path.
   defp http_listeners(port) do
-    http = {Plug.Cowboy, scheme: :http, plug: HttpCapabilityGateway.Gateway, options: [port: port]}
+    http =
+      {Plug.Cowboy, scheme: :http, plug: HttpCapabilityGateway.Gateway, options: [port: port]}
 
     trust_source = Application.get_env(:http_capability_gateway, :trust_level_source, "header")
 
@@ -213,7 +218,11 @@ defmodule HttpCapabilityGateway.Application do
     cond do
       is_binary(catalog_root) ->
         Logger.info("Catalog mode: building policy from BoJ cartridges", root: catalog_root)
-        compile_from_loader(fn -> PolicyLoader.load_from_boj_catalog(catalog_root) end, catalog_root)
+
+        compile_from_loader(
+          fn -> PolicyLoader.load_from_boj_catalog(catalog_root) end,
+          catalog_root
+        )
 
       is_binary(policy_path) ->
         Logger.info("Static mode: loading policy from file", path: policy_path)
@@ -309,6 +318,7 @@ defmodule HttpCapabilityGateway.Application do
             "untrusted" => status_code
           }
         }
+
         Application.put_env(:http_capability_gateway, :stealth_profiles, stealth_profiles)
         Logger.info("Stealth mode enabled", status_code: status_code)
 

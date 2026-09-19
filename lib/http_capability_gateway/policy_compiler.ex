@@ -38,16 +38,25 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
     Represents a single compiled enforcement rule.
     """
     defstruct [
-      :path_pattern,    # String pattern (for display/debugging)
-      :path_regex,      # Compiled Regex for matching
-      :verb,            # Atom: :GET, :POST, :PUT, :DELETE, :PATCH, :HEAD, :OPTIONS
-      :exposure,        # "public", "authenticated", or "internal"
-      :stealth_profile, # String profile name or nil
-      :narrative,       # Optional explanation string
-      :backend,         # Target backend URL
-      :name,            # Unique rule name
-      :capability       # Optional capability label (e.g., "admin:read"); nil if not set
-      ]
+      # String pattern (for display/debugging)
+      :path_pattern,
+      # Compiled Regex for matching
+      :path_regex,
+      # Atom: :GET, :POST, :PUT, :DELETE, :PATCH, :HEAD, :OPTIONS
+      :verb,
+      # "public", "authenticated", or "internal"
+      :exposure,
+      # String profile name or nil
+      :stealth_profile,
+      # Optional explanation string
+      :narrative,
+      # Target backend URL
+      :backend,
+      # Unique rule name
+      :name,
+      # Optional capability label (e.g., "admin:read"); nil if not set
+      :capability
+    ]
 
     @type t :: %__MODULE__{
             path_pattern: String.t(),
@@ -160,6 +169,9 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
 
     main_table = :ets.new(temp_main_name, [:set, :public, :named_table, read_concurrency: true])
     regex_table = :ets.new(temp_regex_name, [:set, :public, :named_table, read_concurrency: true])
+    # Bind this main-table revision to ITS companion. A lookup must never read
+    # the latest global regex pointer while holding an older main-table handle.
+    :ets.insert(main_table, {{:metadata, :regex_table}, temp_regex_name})
 
     errors =
       []
@@ -168,7 +180,7 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
 
     case errors do
       [] ->
-        main_count = :ets.info(main_table, :size)
+        main_count = :ets.info(main_table, :size) - 1
         regex_count = :ets.info(regex_table, :size)
         total_count = main_count + regex_count
 
@@ -242,83 +254,59 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
   @spec lookup(table :: ets_table(), path :: String.t(), verb :: atom()) ::
           {:ok, CompiledRule.t()} | {:error, :no_match}
   def lookup(table, path, verb) when is_atom(verb) do
-    # Tiered lookup strategy for fast enforcement:
-    #
-    # Tier 1: Exact literal path match via ETS key (O(1))
-    #   If the route pattern is a literal string (no regex metacharacters),
-    #   it was stored with key {:exact, path, verb} in the main table.
-    #   This catches 90%+ of lookups in typical policy files.
-    #
-    # Tier 2: Route-specific regex patterns (O(r) where r = regex routes)
-    #   For patterns containing regex metacharacters (e.g., "[0-9]+"),
-    #   iterate ONLY through the dedicated regex table. This avoids scanning
-    #   exact routes and global rules — the regex table contains only regex
-    #   patterns, making Tier 2 scans proportional to the number of regex
-    #   routes (typically 5-10% of all routes).
-    #
-    # Tier 3: Global rules (O(1))
-    #   If no route matches, check global verb rules via {:global, verb}
-    #   in the main table.
-    #
-    # Inspired by cadre-router's oneOfGrouped first-segment dispatch
-    # and aerie's trie-based verb governance.
+    # Exact route > a single matching regex route > global ONLY if no path matches.
+    # A matched path owns its complete verb allowlist. Missing verbs are denied,
+    # never rescued by a global permission or a less-specific route.
+    cond do
+      verb not in @valid_http_verbs ->
+        {:error, :no_match}
 
-    # Tier 1: Exact literal path → O(1) from main table
-    case :ets.lookup(table, {:exact, path, verb}) do
-      [{_key, rule}] ->
-        {:ok, rule}
+      exact_path?(table, path) ->
+        lookup_rule(table, {:exact, path, verb})
 
-      [] ->
-        # Tier 2: Regex route patterns → O(r) from dedicated regex table.
-        # The regex table name is derived from the main table name by the
-        # convention established in compile/2 (stored in :policy_regex_table).
-        regex_table = Application.get_env(:http_capability_gateway, :policy_regex_table)
+      true ->
+        regex_table =
+          case :ets.lookup(table, {:metadata, :regex_table}) do
+            [{_, companion}] -> companion
+            [] -> nil
+          end
 
         case lookup_regex_routes(regex_table, path, verb) do
-          {:ok, _rule} = result ->
-            result
-
-          {:error, :no_match} ->
-            # Tier 3: Global rules → O(1) from main table
-            case :ets.lookup(table, {:global, verb}) do
-              [{_key, rule}] -> {:ok, rule}
-              [] -> {:error, :no_match}
-            end
+          :no_path -> lookup_rule(table, {:global, verb})
+          result -> result
         end
+    end
+  rescue
+    # Retired/stale ETS handles must deny, not crash or use another revision.
+    ArgumentError -> {:error, :no_match}
+  end
+
+  defp exact_path?(table, path) do
+    Enum.any?(@valid_http_verbs, &:ets.member(table, {:exact, path, &1}))
+  end
+
+  defp lookup_rule(table, key) do
+    case :ets.lookup(table, key) do
+      [{_, rule}] -> {:ok, rule}
+      [] -> {:error, :no_match}
     end
   end
 
-  # Iterate through the DEDICATED regex route table.
-  #
-  # Because regex routes are stored in their own ETS table, there is no
-  # need to filter out {:global, _} or {:exact, _, _} entries — every
-  # entry in this table is a regex route pattern. This makes Tier 2
-  # scans faster and simpler.
-  #
-  # If the regex table is nil (e.g., during tests without full compilation),
-  # we return :no_match immediately.
-  defp lookup_regex_routes(nil, _path, _verb), do: {:error, :no_match}
+  defp lookup_regex_routes(nil, _path, _verb), do: :no_path
 
   defp lookup_regex_routes(regex_table, path, verb) do
-    # Read all regex route rules — this table contains ONLY regex patterns.
-    regex_rules = :ets.tab2list(regex_table)
+    matching =
+      :ets.tab2list(regex_table)
+      |> Enum.filter(fn {_, rule} -> Regex.match?(rule.path_regex, path) end)
 
-    # Find first route pattern that matches the path
-    matching_pattern =
-      Enum.find_value(regex_rules, fn {{pattern, _v}, rule} ->
-        if Regex.match?(rule.path_regex, path), do: pattern, else: nil
-      end)
+    patterns = matching |> Enum.map(fn {{pattern, _}, _} -> pattern end) |> Enum.uniq()
 
-    case matching_pattern do
-      nil ->
-        {:error, :no_match}
-
-      pattern ->
-        # Route matched — check if verb is allowed for this route
-        case Enum.find(regex_rules, fn {{p, v}, _} -> p == pattern and v == verb end) do
-          {_key, rule} -> {:ok, rule}
-          nil -> {:error, :no_match}
-        end
+    case patterns do
+      [] -> :no_path
+      [pattern] -> lookup_rule(regex_table, {pattern, verb})
+      # ETS has no meaningful order. Ambiguous overlaps fail closed rather than
+      # randomly choosing a public rule over an authenticated/internal rule.
+      _ -> {:error, :no_match}
     end
   end
 
@@ -339,7 +327,8 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
           path_pattern: ".*",
           path_regex: ~r/.*/,
           verb: verb_atom,
-          exposure: "public",  # Default for global verbs
+          # Default for global verbs
+          exposure: "public",
           stealth_profile: get_stealth_enabled(policy),
           narrative: nil,
           backend: Map.get(policy["governance"], "global_backend"),
@@ -422,7 +411,8 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
   # Return "default" if stealth is enabled, nil otherwise
   defp get_stealth_enabled(policy) do
     case get_in(policy, ["stealth", "enabled"]) do
-      true -> "default"  # Use "default" as profile name for enabled stealth
+      # Use "default" as profile name for enabled stealth
+      true -> "default"
       _ -> nil
     end
   end
@@ -457,7 +447,8 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
   @spec stats(table :: ets_table()) :: map()
   def stats(table) do
     # Read rules from the main table (exact routes + global rules).
-    main_rules = :ets.tab2list(table)
+    main_rules =
+      :ets.tab2list(table) |> Enum.reject(fn {key, _} -> key == {:metadata, :regex_table} end)
 
     {global_count, exact_count} =
       Enum.reduce(main_rules, {0, 0}, fn
@@ -467,7 +458,11 @@ defmodule HttpCapabilityGateway.PolicyCompiler do
       end)
 
     # Read rules from the dedicated regex table (if it exists).
-    regex_table = Application.get_env(:http_capability_gateway, :policy_regex_table)
+    regex_table =
+      case :ets.lookup(table, {:metadata, :regex_table}) do
+        [{_, companion}] -> companion
+        [] -> nil
+      end
 
     regex_rules =
       if regex_table && :ets.whereis(regex_table) != :undefined do
