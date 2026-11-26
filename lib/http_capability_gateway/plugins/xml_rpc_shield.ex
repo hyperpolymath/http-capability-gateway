@@ -9,7 +9,7 @@ defmodule HttpCapabilityGateway.Plugins.XmlRpcShield do
 
   @impl true
   def inspect_request(conn, _opts) do
-    body = Plug.Conn.get_private(conn, :body)
+    body = Map.get(conn.private, :body)
 
     case extract_method(body) do
       nil -> :pass
@@ -24,4 +24,6 @@ defmodule HttpCapabilityGateway.Plugins.XmlRpcShield do
       _ -> nil
     end
   end
+
+  defp extract_method(_no_body), do: nil
 end

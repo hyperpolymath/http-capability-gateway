@@ -39,7 +39,7 @@ defmodule HttpCapabilityGateway.Plugins.WebhookHardener do
   end
 
   defp get_json_target(conn) do
-    case Jason.decode(Plug.Conn.get_private(conn, :body) || "") do
+    case Jason.decode(Map.get(conn.private, :body) || "") do
       {:ok, %{"target" => t}} -> t
       _ -> nil
     end
@@ -70,7 +70,7 @@ defmodule HttpCapabilityGateway.Plugins.WebhookHardener do
   end
 
   defp try_parse_ip(host) do
-    case :inet.parse_ipv4_address(host) || :inet.parse_ipv6_address(host) do
+    case host && :inet.parse_address(String.to_charlist(host)) do
       {:ok, ip} -> {:ok, ip}
       _ -> :error
     end
@@ -81,9 +81,16 @@ defmodule HttpCapabilityGateway.Plugins.WebhookHardener do
   end
 
   defp in_cidr?(ip, cidr) do
-    with {:ok, net, mask} <- :inet.parse_cidr_address(cidr),
+    # :inet has no CIDR parser, so split "addr/len" and build the mask here.
+    with [addr, len] <- String.split(cidr, "/", parts: 2),
+         {prefix, ""} <- Integer.parse(len),
+         {:ok, net} <- :inet.parse_address(String.to_charlist(addr)),
+         true <- tuple_size(net) == tuple_size(ip),
+         bits = if(tuple_size(net) == 4, do: 32, else: 128),
+         true <- prefix >= 0 and prefix <= bits,
          {:ok, net_int} <- to_int(net),
          {:ok, ip_int} <- to_int(ip) do
+      mask = ((1 <<< prefix) - 1) <<< (bits - prefix)
       (ip_int &&& mask) == (net_int &&& mask)
     else
       _ -> false
