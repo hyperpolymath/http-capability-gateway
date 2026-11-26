@@ -35,12 +35,15 @@ defmodule HttpCapabilityGateway.Plugins.WebhookHardener do
   end
 
   defp extract_target(conn) do
-    conn.body_params["target"] || get_json_target(conn)
+    case conn.body_params do
+      %{"target" => target} when is_binary(target) -> target
+      _ -> get_json_target(conn)
+    end
   end
 
   defp get_json_target(conn) do
     case Jason.decode(Map.get(conn.private, :body) || "") do
-      {:ok, %{"target" => t}} -> t
+      {:ok, %{"target" => target}} when is_binary(target) -> target
       _ -> nil
     end
   end
@@ -51,7 +54,7 @@ defmodule HttpCapabilityGateway.Plugins.WebhookHardener do
 
   defp ip_blocked?(target, blocked) do
     case URI.parse(target) do
-      %URI{host: host} -> resolve_and_check(host, blocked)
+      %URI{host: host} when is_binary(host) -> resolve_and_check(host, blocked)
       _ -> false
     end
   end

@@ -12,7 +12,7 @@ defmodule HttpCapabilityGateway.Plugins.XmlRpcShield do
     body = Map.get(conn.private, :body)
 
     case extract_method(body) do
-      nil -> :pass
+      nil -> {:deny, conn, :rpc_method_missing}
       "pingback.ping" -> {:allow, conn}
       _ -> {:deny, conn, :rpc_method_unauthorized}
     end

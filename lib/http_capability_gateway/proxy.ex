@@ -23,6 +23,16 @@ defmodule HttpCapabilityGateway.Proxy do
       config :http_capability_gateway,
         backend_url: "http://localhost:8080"
 
+  Request inspection is opt-in for exact {method, path} pairs:
+
+      config :http_capability_gateway, :request_plugins, %{
+        {"POST", "/webhook"} => [{HttpCapabilityGateway.Plugins.WebhookHardener, %{}}],
+        {"POST", "/xmlrpc.php"} => [{HttpCapabilityGateway.Plugins.XmlRpcShield, %{}}]
+      }
+
+  Plugins run in order after the bounded body read. A denial returns 403
+  without contacting the backend. Allowed requests forward the original bytes.
+
   ## Headers
 
   - Forwards most headers from client to backend
@@ -82,21 +92,15 @@ defmodule HttpCapabilityGateway.Proxy do
            read_timeout: 5_000
          ) do
       {:ok, body, conn} when byte_size(body) <= limit ->
-        headers = build_backend_headers(conn)
+        case inspect_request(conn, body) do
+          {:allow, conn} ->
+            forward_body(conn, target_url, body)
 
-        case make_backend_request(conn.method, target_url, headers, body) do
-          {:ok, response} ->
-            send_backend_response(conn, response)
-
-          {:error, reason} ->
-            Logger.error("Backend request failed", error: inspect(reason))
-
+          {:deny, conn, reason} ->
             conn
             |> Plug.Conn.put_resp_content_type("application/json")
-            |> Plug.Conn.send_resp(
-              502,
-              Jason.encode!(%{error: "Bad Gateway", message: "Backend service unavailable"})
-            )
+            |> Plug.Conn.send_resp(403, Jason.encode!(%{error: "Forbidden", reason: reason}))
+            |> Plug.Conn.halt()
         end
 
       {:error, _} ->
@@ -106,6 +110,45 @@ defmodule HttpCapabilityGateway.Proxy do
         conn
         |> Plug.Conn.put_resp_header("connection", "close")
         |> Plug.Conn.send_resp(413, "Payload Too Large")
+    end
+  end
+
+  defp inspect_request(conn, body) do
+    plugins = Application.get_env(:http_capability_gateway, :request_plugins, %{})
+
+    case Map.get(plugins, {conn.method, conn.request_path}, []) do
+      [] -> {:allow, conn}
+      route_plugins -> run_plugins(Plug.Conn.put_private(conn, :body, body), route_plugins)
+    end
+  end
+
+  defp run_plugins(conn, []), do: {:allow, conn}
+
+  defp run_plugins(conn, [{plugin, opts} | rest]) do
+    case plugin.inspect_request(conn, opts) do
+      :pass -> run_plugins(conn, rest)
+      {:allow, conn} -> run_plugins(conn, rest)
+      {:deny, conn} -> {:deny, conn, :request_denied}
+      {:deny, conn, reason} -> {:deny, conn, reason}
+    end
+  end
+
+  defp forward_body(conn, target_url, body) do
+    headers = build_backend_headers(conn)
+
+    case make_backend_request(conn.method, target_url, headers, body) do
+      {:ok, response} ->
+        send_backend_response(conn, response)
+
+      {:error, reason} ->
+        Logger.error("Backend request failed", error: inspect(reason))
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(
+          502,
+          Jason.encode!(%{error: "Bad Gateway", message: "Backend service unavailable"})
+        )
     end
   end
 
