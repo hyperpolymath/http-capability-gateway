@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: MPL-2.0
+# Manifest for this repository (schema proven/manifest/v1); see
+# hyperpolymath/proven-cicd-and-workflows docs/PROVEN-ADOPTION.adoc.
+schema = "proven/manifest/v1"
+
+# Elixir gateway (mix.exs) plus a Zig FFI (ffi/zig). Commands are unverified
+# locally: no Elixir or Zig toolchain was available when this was written.
+[categories.unit.elixir]
+command = "mix test"
+
+[categories.unit.zig]
+command = "cd ffi/zig && zig build test"
+
+[categories.smoke]
+command = "mix test test/e2e_test.exs"   # gateway end-to-end through the real router
+
+[categories.build.elixir]
+command = "mix compile"
+
+[categories.build.zig]
+command = "cd ffi/zig && zig build"
+
+# The gateway's seams: client to gateway to backend over the wire, and mTLS.
+[categories.p2p]
+command = "mix test test/proxy_wire_test.exs test/mtls_test.exs test/e2e_boj_integration_test.exs"
+
+[languages.ignore.idris2]
+reason = "gateway.ipkg and the *.idr ABI proofs need the Idris2 toolchain, which the umbrella does not provision in release 0.1"
+
+# Absolute latency guard: bench/compare.exs fails (exit 1) if any scenario p99
+# exceeds the 250 ms ceiling (250_000 us). That guard is added by PR #134
+# (fix/benchmark-warnings), not yet on main; this target runs the same
+# harness and comparator as `just bench`, so it carries the ceiling once
+# #134 merges. Until then compare.exs is in scaffold mode and only reports.
+[bench.gateway_latency]
+command = "mix run bench/gateway_latency.exs && mix run bench/compare.exs"
+baselining = true
