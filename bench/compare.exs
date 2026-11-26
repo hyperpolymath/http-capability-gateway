@@ -68,11 +68,14 @@ defmodule Bench.Compare do
 
         IO.puts("")
         emit_table(results, baseline_scenarios, tolerance, enforce: false)
+        absolute_guard!(results)
         System.halt(0)
 
       "active" ->
-        emit_table(results, baseline_scenarios, tolerance, enforce: true)
-        |> case do
+        verdict = emit_table(results, baseline_scenarios, tolerance, enforce: true)
+        absolute_guard!(results)
+
+        case verdict do
           :ok -> System.halt(0)
           :regressed -> System.halt(1)
         end
@@ -151,6 +154,41 @@ defmodule Bench.Compare do
         true -> acc
       end
     end)
+  end
+
+  # Absolute smoke bound, enforced in every mode (including scaffold) so the
+  # gate cannot pass on absence: results must contain at least one scenario,
+  # each scenario must report a p99, and no p99 may exceed the ceiling. The
+  # ceiling is deliberately generous (these are in-process / loopback
+  # scenarios measured in microseconds); it catches a hang or an order-of-
+  # magnitude blow-up, while the tolerance ratios against baseline.json
+  # (active mode) remain the fine-grained regression check.
+  @p99_ceiling_us 250_000.0
+
+  defp absolute_guard!(results) do
+    stats = Map.get(results, "statistics", %{})
+
+    problems =
+      if map_size(stats) == 0 do
+        ["results.json has no scenario statistics (nothing was measured)"]
+      else
+        Enum.flat_map(stats, fn {name, s} ->
+          case percentile_us(s, "99") do
+            nil -> ["#{name}: no p99 reported"]
+            p99 when p99 > @p99_ceiling_us ->
+              ["#{name}: p99 #{fmt(p99)} us exceeds #{@p99_ceiling_us} us ceiling"]
+
+            _ -> []
+          end
+        end)
+      end
+
+    if problems != [] do
+      IO.puts("")
+      IO.puts("**Absolute latency bound FAILED:**")
+      Enum.each(problems, &IO.puts("- #{&1}"))
+      System.halt(1)
+    end
   end
 
   defp percentile_us(scenario_stats, p) do

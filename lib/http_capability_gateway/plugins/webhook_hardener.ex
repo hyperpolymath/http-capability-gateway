@@ -35,12 +35,15 @@ defmodule HttpCapabilityGateway.Plugins.WebhookHardener do
   end
 
   defp extract_target(conn) do
-    conn.body_params["target"] || get_json_target(conn)
+    case conn.body_params do
+      %{"target" => target} when is_binary(target) -> target
+      _ -> get_json_target(conn)
+    end
   end
 
   defp get_json_target(conn) do
-    case Jason.decode(Plug.Conn.get_private(conn, :body) || "") do
-      {:ok, %{"target" => t}} -> t
+    case Jason.decode(Map.get(conn.private, :body) || "") do
+      {:ok, %{"target" => target}} when is_binary(target) -> target
       _ -> nil
     end
   end
@@ -51,7 +54,7 @@ defmodule HttpCapabilityGateway.Plugins.WebhookHardener do
 
   defp ip_blocked?(target, blocked) do
     case URI.parse(target) do
-      %URI{host: host} -> resolve_and_check(host, blocked)
+      %URI{host: host} when is_binary(host) -> resolve_and_check(host, blocked)
       _ -> false
     end
   end
@@ -70,7 +73,7 @@ defmodule HttpCapabilityGateway.Plugins.WebhookHardener do
   end
 
   defp try_parse_ip(host) do
-    case :inet.parse_ipv4_address(host) || :inet.parse_ipv6_address(host) do
+    case host && :inet.parse_address(String.to_charlist(host)) do
       {:ok, ip} -> {:ok, ip}
       _ -> :error
     end
@@ -81,9 +84,16 @@ defmodule HttpCapabilityGateway.Plugins.WebhookHardener do
   end
 
   defp in_cidr?(ip, cidr) do
-    with {:ok, net, mask} <- :inet.parse_cidr_address(cidr),
+    # :inet has no CIDR parser, so split "addr/len" and build the mask here.
+    with [addr, len] <- String.split(cidr, "/", parts: 2),
+         {prefix, ""} <- Integer.parse(len),
+         {:ok, net} <- :inet.parse_address(String.to_charlist(addr)),
+         true <- tuple_size(net) == tuple_size(ip),
+         bits = if(tuple_size(net) == 4, do: 32, else: 128),
+         true <- prefix >= 0 and prefix <= bits,
          {:ok, net_int} <- to_int(net),
          {:ok, ip_int} <- to_int(ip) do
+      mask = ((1 <<< prefix) - 1) <<< (bits - prefix)
       (ip_int &&& mask) == (net_int &&& mask)
     else
       _ -> false
@@ -95,8 +105,8 @@ defmodule HttpCapabilityGateway.Plugins.WebhookHardener do
   defp to_int({a, b, c, d, e, f, g, h}),
     do:
       {:ok,
-       a <<< 120 ||| b <<< 112 ||| c <<< 104 ||| d <<< 96 ||| e <<< 88 ||| f <<< 80 ||| g <<< 72 |||
-         h}
+       a <<< 112 ||| b <<< 96 ||| c <<< 80 ||| d <<< 64 ||| e <<< 48 ||| f <<< 32 |||
+         g <<< 16 ||| h}
 
   defp to_int(_), do: :error
 end

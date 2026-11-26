@@ -487,8 +487,16 @@ defmodule HttpCapabilityGateway.Gateway do
             proxy_end = System.monotonic_time(:millisecond)
             latency_ms = proxy_end - proxy_start
 
-            # Post-proxy: check latency against contract SLA.
-            case K9Contract.enforce_post_proxy(contract, latency_ms) do
+            # A halted proxy response denied the request before it reached the backend.
+            post_proxy_result =
+              if result_conn.halted,
+                do: :not_forwarded,
+                else: K9Contract.enforce_post_proxy(contract, latency_ms)
+
+            case post_proxy_result do
+              :not_forwarded ->
+                result_conn
+
               {:ok, :within_sla} ->
                 # Contract fulfilled — return the proxied response as-is.
                 result_conn

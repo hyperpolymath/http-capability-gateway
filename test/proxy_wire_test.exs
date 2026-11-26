@@ -35,6 +35,7 @@ defmodule HttpCapabilityGateway.ProxyWireTest do
   use ExUnit.Case, async: false
   import Plug.Conn
   import Plug.Test
+  alias HttpCapabilityGateway.Plugins.{WebhookHardener, XmlRpcShield}
   alias HttpCapabilityGateway.Proxy
 
   setup do
@@ -44,7 +45,7 @@ defmodule HttpCapabilityGateway.ProxyWireTest do
       Plug.Cowboy.http(HttpCapabilityGateway.ProxyWireBackend, [owner: self()], port: 0, ref: ref)
 
     previous =
-      for key <- [:backend_url, :max_request_body_bytes],
+      for key <- [:backend_url, :max_request_body_bytes, :request_plugins],
           do: {key, Application.get_env(:http_capability_gateway, key)}
 
     Application.put_env(
@@ -54,6 +55,11 @@ defmodule HttpCapabilityGateway.ProxyWireTest do
     )
 
     Application.put_env(:http_capability_gateway, :max_request_body_bytes, 1024)
+
+    Application.put_env(:http_capability_gateway, :request_plugins, %{
+      {"POST", "/webhook"} => [{WebhookHardener, %{}}],
+      {"POST", "/xmlrpc.php"} => [{XmlRpcShield, %{}}]
+    })
 
     on_exit(fn ->
       Plug.Cowboy.shutdown(ref)
@@ -107,9 +113,55 @@ defmodule HttpCapabilityGateway.ProxyWireTest do
 
   test "body beyond configured bound never reaches upstream" do
     response =
-      conn(:post, "/echo", String.duplicate("x", 1025)) |> Proxy.forward(%{exposure: "public"})
+      conn(:post, "/xmlrpc.php", String.duplicate("x", 1025))
+      |> Proxy.forward(%{exposure: "public"})
 
     assert response.status == 413
     refute_receive {:wire_request, _, _, _, _}
+  end
+
+  test "denies a blocked target in a raw JSON webhook" do
+    response =
+      conn(:post, "/webhook", Jason.encode!(%{target: "http://127.0.0.1"}))
+      |> put_req_header("content-type", "application/json")
+      |> Proxy.forward(%{exposure: "public"})
+
+    assert response.status == 403
+    assert Jason.decode!(response.resp_body)["reason"] == "target_ip_blocked"
+    refute_receive {:wire_request, _, _, _, _}
+  end
+
+  test "denies an unauthorized XML-RPC method" do
+    response =
+      conn(:post, "/xmlrpc.php", "<methodCall><methodName>other</methodName></methodCall>")
+      |> put_req_header("content-type", "text/xml")
+      |> Proxy.forward(%{exposure: "public"})
+
+    assert response.status == 403
+    assert Jason.decode!(response.resp_body)["reason"] == "rpc_method_unauthorized"
+    refute_receive {:wire_request, _, _, _, _}
+  end
+
+  test "denies an XML-RPC request with an empty body" do
+    response =
+      conn(:post, "/xmlrpc.php")
+      |> put_req_header("content-type", "text/xml")
+      |> Proxy.forward(%{exposure: "public"})
+
+    assert response.status == 403
+    assert Jason.decode!(response.resp_body)["reason"] == "rpc_method_missing"
+    refute_receive {:wire_request, _, _, _, _}
+  end
+
+  test "forwards the original XML bytes after inspection" do
+    body = "<methodCall>\n  <methodName>pingback.ping</methodName>\n</methodCall>"
+
+    response =
+      conn(:post, "/xmlrpc.php", body)
+      |> put_req_header("content-type", "text/xml")
+      |> Proxy.forward(%{exposure: "public"})
+
+    assert response.status == 200
+    assert_receive {:wire_request, "/xmlrpc.php", "", _, ^body}
   end
 end
