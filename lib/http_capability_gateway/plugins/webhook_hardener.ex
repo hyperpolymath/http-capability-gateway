@@ -102,8 +102,8 @@ defmodule HttpCapabilityGateway.Plugins.WebhookHardener do
   defp to_int({a, b, c, d, e, f, g, h}),
     do:
       {:ok,
-       a <<< 120 ||| b <<< 112 ||| c <<< 104 ||| d <<< 96 ||| e <<< 88 ||| f <<< 80 ||| g <<< 72 |||
-         h}
+       a <<< 112 ||| b <<< 96 ||| c <<< 80 ||| d <<< 64 ||| e <<< 48 ||| f <<< 32 |||
+         g <<< 16 ||| h}
 
   defp to_int(_), do: :error
 end
